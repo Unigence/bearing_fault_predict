@@ -1,0 +1,146 @@
+bearing-fault-diagnosis/
+│
+├── configs/                          # 配置文件目录
+│   ├── config.yaml                   # 主配置文件
+│   ├── model_config.yaml             # 模型结构配置
+│   ├── train_config.yaml             # 训练超参数配置
+│   └── augmentation_config.yaml      # 数据增强配置
+│
+├── raw_datasets/                 # 原始数据（√）
+│   ├── train/
+│   │   ├── normal_train160/
+│   │   ├── inner_wear_train120/
+│   │   ├── outer_missing_train180/
+│   │   ├── roller_broken_train150/
+│   │   ├── roller_wear_train100/
+│   │   └── inner_broken_train150/
+│   │
+│   └── test/
+│   
+├── preprocessors/                # 数据预处理模块
+│       ├── __init__.py
+│       ├── rawdata_processor.py      # 原始数据处理
+│       ├── signal_transform.py       # 信号变换(FFT, CWT)（√）
+│       └── feature_extraction.py     # 特征提取(已废弃VMD)（√）
+│
+├── models/                           # 模型定义（√）
+│   ├── __init__.py
+│   │
+│   ├── backbone/                     # 三分支backbone（√）
+│   │   ├── __init__.py
+│   │   ├── temporal_branch.py        # 时域分支
+│   │   ├── frequency_branch.py       # 频域分支
+│   │   └── timefreq_branch.py        # 时频分支
+│   │
+│   ├── modules/                      # 可复用的网络模块（√）
+│   │   ├── __init__.py
+│   │   ├── attention.py              # 注意力机制(CBAM, SE, EMA, etc.)
+│   │   ├── msfeb.py                  # 多尺度特征提取块
+│   │   ├── residual.py               # 残差块
+│   │   └── pooling.py                # 各种池化层
+│   │
+│   ├── fusion/                       # 特征融合模块（√）
+│   │   ├── __init__.py
+│   │   ├── adaptive_fusion.py        # 自适应融合
+│   │   ├── cross_modal_attention.py  # 跨模态注意力
+│   │   └── hierarchical_fusion.py    # 多级融合
+│   │
+│   ├── heads/                        # 分类头（√）
+│   │   ├── __init__.py
+│   │   ├── softmax_head.py           # Softmax分类器
+│   │   ├── arcface_head.py           # ArcFace分类器
+│   │   └── dual_head.py              # 双头设计
+│   │
+│   └── multimodal_model.py           # 完整模型集成（√）
+│
+├── datasets/                         # PyTorch Dataset定义
+│   ├── __init__.py
+│   ├── bearing_dataset.py            # 主数据集类（√）
+│   ├── contrastive_dataset.py        # 对比学习数据集
+│   └── dataloader.py                 # DataLoader创建
+│
+├── augmentation/                     # 数据增强（√）
+│   ├── __init__.py
+│   ├── time_domain_aug.py            # 时域增强
+│   ├── frequency_aug.py              # 频域增强
+│   ├── mixup.py                            # Mixup相关
+│   └── augmentation_pipeline.py      # 增强管道
+│
+├── losses/                           # 损失函数
+│   ├── __init__.py
+│   ├── focal_loss.py                 # Focal Loss
+│   ├── arcface_loss.py               # ArcFace Loss
+│   ├── center_loss.py                # Center Loss
+│   ├── contrastive_loss.py           # 对比学习损失
+│   └── combined_loss.py              # 组合损失
+│
+├── training/                         # 训练相关
+│   ├── __init__.py
+│   │
+│   ├── pretrain/                     # 预训练
+│   │   ├── __init__.py
+│   │   ├── contrastive_trainer.py    # 对比学习训练器
+│   │   └── pretrain_launcher.py      # 预训练启动脚本
+│   │
+│   ├── finetune/                     # 微调
+│   │   ├── __init__.py
+│   │   ├── supervised_trainer.py     # 有监督训练器
+│   │   └── finetune_launcher.py      # 微调启动脚本
+│   │
+│   ├── trainer_base.py               # 训练器基类
+│   ├── optimizer_factory.py          # 优化器工厂
+│   ├── scheduler_factory.py          # 学习率调度器工厂
+│   └── callbacks.py                  # 训练回调(早停, 保存, etc.)
+│
+├── utils/                            # 工具函数
+│   ├── __init__.py
+│   ├── metrics.py                    # 评估指标
+│   ├── visualization.py              # 可视化工具
+│   ├── checkpoint.py                 # 模型保存/加载
+│   ├── seed.py                       # 随机种子设置
+│   └── config_parser.py              # 配置文件解析
+│
+├── evaluation/                       # 评估模块
+│   ├── __init__.py
+│   ├── evaluator.py                  # 评估器
+│   ├── confusion_matrix.py           # 混淆矩阵
+│   ├── tsne_visualization.py         # t-SNE可视化
+│   └── attention_visualization.py    # 注意力可视化
+│
+├── experiments/                      # 实验管理
+│   ├── runs/                         # 训练运行记录
+│   │   ├── pretrain_20250101_120000/
+│   │   │   ├── config.yaml
+│   │   │   ├── logs/
+│   │   │   ├── checkpoints/
+│   │   │   └── visualizations/
+│   │   │
+│   │   └── finetune_20250101_140000/
+│   │       ├── config.yaml
+│   │       ├── logs/
+│   │       ├── checkpoints/
+│   │       └── visualizations/
+│   │
+│   └── ablation/                     # 消融实验
+│       ├── no_attention/
+│       ├── single_branch/
+│       └── ...
+│
+├── tests/                            # 单元测试
+│   ├── __init__.py
+│   ├── test_models.py                # 测试模型（√）
+│   ├── test_augmentation.py          # 测试增强
+│   ├── test_losses.py                # 测试损失函数
+│   └── test_dataset.py               # 测试数据集
+│
+├── docs/                             # 文档
+│   ├── README.md
+│   ├── model_architecture.md         # 模型架构文档
+│   ├── training_guide.md             # 训练指南
+│   └── api_reference.md              # API文档
+│
+├── requirements.txt                  # Python依赖
+├── .gitignore                        # Git忽略文件
+├── README.md                         # 项目说明
+│
+└── main.py                           # 主入口脚本

@@ -1,0 +1,1161 @@
+轴承故障诊断模型完整设计方案
+📐 整体架构概览
+输入: 原始振动信号 (512, 1)
+    ↓
+┌───────────────────────────────────────────────────────┐
+│               三分支并行特征提取模块                      │
+├───────────────┬───────────────┬───────────────────────┤
+│  时域分支      │   频域分支     │    时频分支            │
+│  (Temporal)   │  (Frequency)  │  (Time-Frequency)     │
+└───────┬───────┴───────┬───────┴───────────┬───────────┘
+        │               │                   │
+        └───────────────┴───────────────────┘
+                        ↓
+        ┌───────────────────────────────────┐
+        │      多级自适应特征融合模块          │
+        │  (Hierarchical Adaptive Fusion)   │
+        └───────────────┬───────────────────┘
+                        ↓
+        ┌───────────────────────────────────┐
+        │      增强判别式分类器                │
+        │  (Enhanced Discriminative Head)   │
+        └───────────────┬───────────────────┘
+                        ↓
+                  故障类别 (6类)
+```
+
+---
+
+## 🏗️ 一、模型核心模块设计
+
+### **1.1 时域分支 (Temporal Branch)**
+
+**目标：** 捕捉时域冲击特征、周期性模式、局部异常
+```
+【输入】原始信号: (Batch, 1, 512)
+
+┌─────────────────────────────────────────────────────┐
+│ Stage 1: 宽卷积去噪层 (Wide Kernel Denoising)        │
+├─────────────────────────────────────────────────────┤
+│ Conv1D(in=1, out=32, kernel=64, padding='same')    │
+│   - 大卷积核捕捉低频噪声                             │
+│ + BatchNorm1d + LeakyReLU(0.2)                      │
+│ + Dropout1d(p=0.1)  # 浅层轻度dropout               │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 2: 多尺度特征提取块 (MSFEB × 2)                │
+├─────────────────────────────────────────────────────┤
+│ 【MSFEB Block 设计】                                 │
+│                                                      │
+│ 输入 x → 三路并行卷积:                                │
+│   ├─ Path1: Conv1D(k=3, dilation=1) → BN → ReLU    │
+│   ├─ Path2: Conv1D(k=5, dilation=2) → BN → ReLU    │
+│   └─ Path3: Conv1D(k=7, dilation=4) → BN → ReLU    │
+│                                                      │
+│ Concat [Path1, Path2, Path3] → (3×channels)        │
+│   ↓                                                  │
+│ 1×1 Conv (通道融合) → (channels)                     │
+│   ↓                                                  │
+│ Residual Connection: out = x + conv_out             │
+│                                                      │
+│ 【两个MSFEB的配置】                                   │
+│ - MSFEB-1: channels=32→64                           │
+│ - MSFEB-2: channels=64→128                          │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 3: 通道-空间协同注意力 (CBAM)                   │
+├─────────────────────────────────────────────────────┤
+│ 【Channel Attention】                                │
+│ - Global AvgPool + Global MaxPool                   │
+│ - Shared MLP: FC(128→16) → ReLU → FC(16→128)       │
+│ - Sigmoid → channel_weights                         │
+│                                                      │
+│ 【Spatial Attention】                                │
+│ - Concat [AvgPool(dim=1), MaxPool(dim=1)]          │
+│ - Conv1D(k=7) → Sigmoid → spatial_weights          │
+│                                                      │
+│ 输出: weighted_features = x * channel_w * spatial_w │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 4: 时序建模层 (Bi-GRU)                         │
+├─────────────────────────────────────────────────────┤
+│ Bi-GRU(input_size=128, hidden_size=128, layers=2)  │
+│   - Dropout between layers: 0.2                     │
+│   - 输出: (Batch, 512, 256)  # 双向拼接              │
+│                                                      │
+│ 【时序注意力】Temporal Self-Attention                 │
+│   Q, K, V = Linear(256, 256) × 3                   │
+│   Attention(Q,K,V) = softmax(QK^T/√d)V             │
+│   Output: (Batch, 512, 256)                        │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 5: 特征聚合与压缩                               │
+├─────────────────────────────────────────────────────┤
+│ 【多头聚合】                                          │
+│ - Head1: Global Average Pooling → (256,)           │
+│ - Head2: Global Max Pooling → (256,)               │
+│ - Head3: Last Hidden State → (256,)                │
+│                                                      │
+│ Concat [Head1, Head2, Head3] → (768,)              │
+│   ↓                                                  │
+│ FC(768→384) + BN + ReLU + Dropout(0.3)             │
+│   ↓                                                  │
+│ FC(384→256) + BN + Dropout(0.2)                    │
+│                                                      │
+│ 【输出】时域特征向量: (Batch, 256)                    │
+└─────────────────────────────────────────────────────┘
+```
+
+**关键设计点：**
+1. **渐进式Dropout**: 0.1(浅层) → 0.2(中层) → 0.3(深层)
+2. **多尺度膨胀卷积**: 同时捕捉不同频率成分
+3. **CBAM双重注意力**: 既关注重要通道，又关注关键时间位置
+4. **多头聚合**: 避免信息丢失
+
+---
+
+### **1.2 频域分支 (Frequency Branch)**
+
+**目标：** 提取频谱峰值、谐波特征、频带能量分布
+```
+【输入预处理】
+原始信号 (512,) → FFT → 单边频谱 (257,)
+  - 保留DC到奈奎斯特频率
+  - 对数幅度谱: log(|FFT| + 1e-8)
+  - Z-score标准化
+
+┌─────────────────────────────────────────────────────┐
+│ Stage 1: 频域多尺度卷积                               │
+├─────────────────────────────────────────────────────┤
+│ 输入: (Batch, 1, 257)                               │
+│                                                      │
+│ Conv1D(1→64, k=5) + BN + ReLU + Dropout(0.15)      │
+│   ↓                                                  │
+│ 【Inception-like多尺度模块】                          │
+│   ├─ Branch1: Conv1D(64→32, k=1)                   │
+│   ├─ Branch2: Conv1D(64→32, k=3)                   │
+│   ├─ Branch3: Conv1D(64→32, k=5)                   │
+│   └─ Branch4: MaxPool(k=3) → Conv1D(64→32, k=1)   │
+│                                                      │
+│ Concat → (128,) → Conv1D(128→128, k=1) 特征融合     │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 2: 频谱增强注意力 (Squeeze-Excitation)          │
+├─────────────────────────────────────────────────────┤
+│ 【SE Block】                                         │
+│ Global AvgPool → FC(128→16) → ReLU                 │
+│              → FC(16→128) → Sigmoid                │
+│                                                      │
+│ 特征重加权: x_out = x * se_weights                   │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 3: 深度特征提取                                 │
+├─────────────────────────────────────────────────────┤
+│ 【残差块 × 2】                                        │
+│ Residual Block:                                     │
+│   - Conv1D(128→128, k=3) + BN + ReLU              │
+│   - Dropout(0.2)                                    │
+│   - Conv1D(128→128, k=3) + BN                      │
+│   - Skip Connection + ReLU                          │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 4: 全局特征聚合                                 │
+├─────────────────────────────────────────────────────┤
+│ 【双路聚合】                                          │
+│ - Path1: Global Average Pooling → (128,)           │
+│ - Path2: Global Max Pooling → (128,)               │
+│                                                      │
+│ Concat → (256,)                                     │
+│   ↓                                                  │
+│ FC(256→512) + BN + ReLU + Dropout(0.3)             │
+│   ↓                                                  │
+│ FC(512→256) + BN + Dropout(0.2)                    │
+│                                                      │
+│ 【输出】频域特征向量: (Batch, 256)                    │
+└─────────────────────────────────────────────────────┘
+```
+
+**关键设计点：**
+1. **对数谱**: 压缩动态范围，突出弱故障特征
+2. **Inception结构**: 多尺度感受野捕捉不同频带
+3. **SE注意力**: 自动学习重要频率通道
+
+---
+
+### **1.3 时频分支 (Time-Frequency Branch)**
+
+**目标：** 捕捉时变频率特征、瞬态冲击、能量分布演变
+```
+【输入预处理】
+原始信号 (512,) → CWT → 时频图 (64, 128, 1)
+  - 使用Morlet小波
+  - 频率范围: 100Hz - 10kHz (对数分布32个尺度)
+  - 时间采样点: 128
+  - Resize to (64, 128) + 归一化到[0,1]
+
+┌─────────────────────────────────────────────────────┐
+│ Stage 1: 轻量级特征提取 (Efficient CNN Backbone)      │
+├─────────────────────────────────────────────────────┤
+│ 【Block 1】                                          │
+│ Conv2D(1→32, k=3, s=1, p=1)                        │
+│ + BN + ReLU + Dropout2d(0.1)                       │
+│ + MaxPool2d(k=2, s=2)  → (32, 32, 64)              │
+│                                                      │
+│ 【Block 2】                                          │
+│ Conv2D(32→64, k=3, s=1, p=1)                       │
+│ + BN + ReLU + Dropout2d(0.15)                      │
+│ + MaxPool2d(k=2, s=2)  → (64, 16, 32)              │
+│                                                      │
+│ 【Block 3】                                          │
+│ Conv2D(64→128, k=3, s=1, p=1)                      │
+│ + BN + ReLU + Dropout2d(0.2)                       │
+│ + MaxPool2d(k=2, s=2)  → (128, 8, 16)              │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 2: 高效多尺度注意力 (EMA)                       │
+├─────────────────────────────────────────────────────┤
+│ 【EMA Module】参考EMANet设计                          │
+│                                                      │
+│ 输入: (B, 128, 8, 16)                               │
+│                                                      │
+│ ① 多尺度特征提取:                                     │
+│   - Branch1: Conv2D(k=1×1) # 点特征                 │
+│   - Branch2: Conv2D(k=3×3) # 局部特征               │
+│   - Branch3: Conv2D(k=5×5, groups=128) # 全局       │
+│                                                      │
+│ ② 空间注意力:                                        │
+│   - 沿通道维度: AvgPool + MaxPool                   │
+│   - Conv2D(2→1, k=7) + Sigmoid                     │
+│                                                      │
+│ ③ 通道注意力:                                        │
+│   - Global Context: AvgPool(spatial) → (B,128,1,1) │
+│   - FC(128→32) → ReLU → FC(32→128) → Sigmoid      │
+│                                                      │
+│ 输出: x_out = x * spatial_attn * channel_attn       │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 3: 自适应池化与特征压缩                         │
+├─────────────────────────────────────────────────────┤
+│ 【Adaptive Pooling】                                 │
+│ - AdaptiveAvgPool2d(output_size=(4, 4))            │
+│ - AdaptiveMaxPool2d(output_size=(4, 4))            │
+│                                                      │
+│ Concat → (256, 4, 4) → Flatten → (4096,)           │
+│   ↓                                                  │
+│ FC(4096→512) + BN + ReLU + Dropout(0.3)            │
+│   ↓                                                  │
+│ FC(512→256) + BN + Dropout(0.2)                    │
+│                                                      │
+│ 【输出】时频特征向量: (Batch, 256)                    │
+└─────────────────────────────────────────────────────┘
+```
+
+**关键设计点：**
+1. **CWT预处理**: Morlet小波保留相位信息
+2. **轻量级CNN**: 参数少但感受野大
+3. **EMA注意力**: 计算高效，适合2D特征图
+
+---
+
+## 🔗 二、多级自适应特征融合模块
+
+这是整个模型的核心，采用**三级渐进式融合**策略：
+```
+┌─────────────────────────────────────────────────────┐
+│ 输入: 三个分支特征                                    │
+│   - 时域特征: F_t (Batch, 256)                       │
+│   - 频域特征: F_f (Batch, 256)                       │
+│   - 时频特征: F_tf (Batch, 256)                      │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Level 1: 模态重要性学习 (Modal Importance Learning)   │
+├─────────────────────────────────────────────────────┤
+│ 【自适应权重生成网络】                                 │
+│                                                      │
+│ Concat [F_t, F_f, F_tf] → (768,)                    │
+│   ↓                                                  │
+│ FC(768→256) + BN + ReLU + Dropout(0.25)            │
+│   ↓                                                  │
+│ FC(256→64) + ReLU                                   │
+│   ↓                                                  │
+│ FC(64→3) + Softmax  →  [w_t, w_f, w_tf]           │
+│   模态权重: 动态学习每个模态的贡献度                   │
+│                                                      │
+│ 【加权融合】                                          │
+│ F_weighted = w_t·F_t + w_f·F_f + w_tf·F_tf         │
+│             ↓                                        │
+│         (Batch, 256)                                │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Level 2: 跨模态交互增强 (Cross-Modal Interaction)     │
+├─────────────────────────────────────────────────────┤
+│ 【目标】让不同模态的特征互相补充                        │
+│                                                      │
+│ ① 构建交互矩阵:                                       │
+│    Stack [F_t, F_f, F_tf] → (3, 256)               │
+│      ↓ Transpose                                    │
+│    (256, 3)                                         │
+│                                                      │
+│ ② Multi-Head Cross Attention (简化版):               │
+│    Q = Linear(F_weighted, 256)  # Query: 融合特征   │
+│    K = Linear([F_t;F_f;F_tf], 256) # Keys: 各模态  │
+│    V = Linear([F_t;F_f;F_tf], 256) # Values: 各模态│
+│                                                      │
+│    Attention = softmax(Q @ K^T / √256) @ V         │
+│      ↓                                              │
+│    (Batch, 256)                                     │
+│                                                      │
+│ ③ 残差连接:                                          │
+│    F_interact = F_weighted + 0.5 * Attention        │
+│                  ↓                                   │
+│              (Batch, 256)                           │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Level 3: 多粒度特征整合 (Multi-Granularity Fusion)    │
+├─────────────────────────────────────────────────────┤
+│ 【策略】同时保留原始、加权、交互三种粒度的特征           │
+│                                                      │
+│ Concat [F_t, F_f, F_tf, F_weighted, F_interact]    │
+│   ↓                                                  │
+│ (Batch, 256×3 + 256 + 256) = (Batch, 1280)         │
+│                                                      │
+│ 【特征压缩与精炼】                                     │
+│ FC(1280→512) + BN + ReLU + Dropout(0.35)           │
+│   ↓                                                  │
+│ FC(512→256) + BN + ReLU + Dropout(0.3)             │
+│   ↓                                                  │
+│ FC(256→128) + BN + Dropout(0.2)                    │
+│                                                      │
+│ 【输出】融合特征向量: F_fused (Batch, 128)            │
+└─────────────────────────────────────────────────────┘
+```
+
+**融合模块的创新点：**
+1. **动态权重学习**: 不是固定权重，而是根据输入自适应调整
+2. **交互增强**: 让模态之间互相"看到"对方的信息
+3. **多粒度保留**: 避免信息在融合过程中丢失
+
+---
+
+## 🎯 三、增强判别式分类器
+```
+┌─────────────────────────────────────────────────────┐
+│ 输入: 融合特征 F_fused (Batch, 128)                   │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 1: 特征解耦与增强                               │
+├─────────────────────────────────────────────────────┤
+│ 【策略】增加类别间的可分性                             │
+│                                                      │
+│ FC(128→256) + BN + ReLU                            │
+│   ↓                                                  │
+│ Dropout(0.4)  # 分类前强dropout防止过拟合            │
+│   ↓                                                  │
+│ FC(256→128) + BN + ReLU                            │
+│   ↓                                                  │
+│ Dropout(0.3)                                        │
+│   ↓                                                  │
+│ L2 Normalization  # 特征归一化到单位球面              │
+│   ↓                                                  │
+│ F_normalized (Batch, 128)                           │
+└─────────────────────────────────────────────────────┘
+                        ↓
+┌─────────────────────────────────────────────────────┐
+│ Stage 2: 双分类头设计                                 │
+├─────────────────────────────────────────────────────┤
+│ 【Head 1: Softmax分类器】用于训练和推理                │
+│ FC(128→6) + Softmax                                │
+│   ↓                                                  │
+│ Output: class_probs (Batch, 6)                      │
+│                                                      │
+│ 【Head 2: ArcFace分类器】用于度量学习（训练时）         │
+│ ArcFace(in_features=128, out_features=6,           │
+│         s=30.0, m=0.50)                            │
+│   ↓                                                  │
+│ Output: arcface_logits (Batch, 6)                   │
+│                                                      │
+│ 【训练时】两个头同时使用，推理时只用Head 1              │
+└─────────────────────────────────────────────────────┘
+```
+
+**分类器设计要点：**
+1. **L2归一化**: 将特征映射到超球面，便于度量学习
+2. **ArcFace**: 增大类间距离，缩小类内距离
+3. **双分类头**: 联合训练提升特征判别性
+
+---
+
+## 🔄 四、对比学习预训练模块
+
+**两阶段训练策略：**
+
+### **阶段1: 自监督对比学习预训练 (20-30 epochs)**
+```
+┌─────────────────────────────────────────────────────┐
+│ 目标: 在无标签情况下学习通用特征表示                    │
+└─────────────────────────────────────────────────────┘
+
+【数据增强对】
+对于每个样本 x，生成两个增强版本:
+  x1 = Aug_strong(x)  # 强增强
+  x2 = Aug_weak(x)    # 弱增强
+
+【前向传播】
+x1, x2 → [三分支网络] → F_fused_1, F_fused_2
+         ↓
+    Projection Head (临时层，推理时丢弃):
+         FC(128→256) → BN → ReLU
+         → FC(256→128) → L2_normalize
+         ↓
+    z1, z2  (投影特征)
+
+【对比损失: SimCLR变体】
+① 计算相似度矩阵:
+   sim(i,j) = z_i · z_j / τ  (τ=0.07, 温度系数)
+
+② 正样本对: (z1, z2) 来自同一原始样本
+   负样本对: batch内其他所有样本
+
+③ NT-Xent Loss (归一化温度交叉熵):
+   L_contrast = -log( exp(sim(z1,z2)/τ) / Σ exp(sim(z1,z_k)/τ) )
+
+【预训练策略】
+- 不使用标签
+- 只训练backbone，不训练分类头
+- 使用所有6类数据混合
+- Optimizer: AdamW (lr=1e-3, weight_decay=1e-4)
+- Cosine Annealing调度器
+```
+
+### **阶段2: 有监督微调 (50-80 epochs)**
+```
+【冻结策略】可选两种:
+策略A (推荐): 冻结前50%的backbone层
+策略B: 全部微调但使用较小学习率
+
+【微调时的模型修改】
+- 移除Projection Head
+- 加载预训练的backbone权重
+- 初始化分类器随机权重
+- 联合训练Softmax + ArcFace
+```
+
+---
+
+## 📚 五、知识蒸馏设计
+
+**目标：** 用大模型（Teacher）指导小模型（Student）学习
+```
+┌─────────────────────────────────────────────────────┐
+│ 教师模型 (Teacher Model) - 复杂版                     │
+├─────────────────────────────────────────────────────┤
+│ - 每个分支通道数×1.5                                  │
+│ - 额外的Transformer层                                 │
+│ - 参数量: ~5M                                        │
+│ - 在训练集上预先训练到最优                             │
+└─────────────────────────────────────────────────────┘
+                        ↓ 知识迁移
+┌─────────────────────────────────────────────────────┐
+│ 学生模型 (Student Model) - 标准版                     │
+├─────────────────────────────────────────────────────┤
+│ - 标准三分支架构                                      │
+│ - 参数量: ~2M                                        │
+│ - 目标: 性能接近Teacher但推理速度快3倍                 │
+└─────────────────────────────────────────────────────┘
+
+【蒸馏策略】三种知识同时迁移:
+
+① 软标签蒸馏 (Soft Label Distillation):
+   L_soft = KL_div(
+       Student_logits / T,
+       Teacher_logits / T
+   ) × T²
+   T=4.0 (温度参数，平滑分布)
+
+② 特征蒸馏 (Feature Distillation):
+   在中间层进行特征对齐:
+   - 时域分支输出: F_t_student ≈ F_t_teacher
+   - 频域分支输出: F_f_student ≈ F_f_teacher  
+   - 时频分支输出: F_tf_student ≈ F_tf_teacher
+   
+   L_feat = MSE(F_student, F_teacher) × 0.5
+
+③ 关系蒸馏 (Relation Distillation):
+   保持样本间的相似度关系:
+   S_teacher = cosine_sim(Teacher_features)  # (B×B)
+   S_student = cosine_sim(Student_features)  # (B×B)
+   
+   L_relation = MSE(S_student, S_teacher) × 0.1
+
+【总蒸馏损失】
+L_distill = L_soft + L_feat + L_relation
+
+【最终学生损失】
+L_student = α·L_task + (1-α)·L_distill
+  其中 α=0.3 (硬标签权重)
+      (1-α)=0.7 (蒸馏权重)
+
+🎲 六、Dropout策略设计
+分层自适应Dropout率：
+python【原则】
+1. 浅层 (特征提取): 低Dropout (0.1-0.15)
+   - 避免破坏底层通用特征
+
+2. 中层 (特征融合): 中等Dropout (0.2-0.3)
+   - 防止过拟合，增强泛化
+
+3. 深层 (分类器): 高Dropout (0.3-0.4)
+   - 强正则化，最容易过拟合的部分
+
+【具体配置表】
+┌────────────────────┬──────────┬────────────┐
+│     模块位置        │ Dropout率 │   类型      │
+├────────────────────┼──────────┼────────────┤
+│ 时域-Stage1 (Conv) │   0.10   │ Dropout1d  │
+│ 时域-MSFEB后       │   0.15   │ Dropout1d  │
+│ 时域-Bi-GRU层间    │   0.20   │   Dropout  │
+│ 时域-最终FC        │   0.30   │   Dropout  │
+├────────────────────┼──────────┼────────────┤
+│ 频域-初始Conv后    │   0.15   │ Dropout1d  │
+│ 频域-残差块        │   0.20   │ Dropout1d  │
+│ 频域-最终FC        │   0.30   │   Dropout  │
+├────────────────────┼──────────┼────────────┤
+│ 时频-Conv Block1   │   0.10   │ Dropout2d  │
+│ 时频-Conv Block2   │   0.15   │ Dropout2d  │
+│ 时频-Conv Block3   │   0.20   │ Dropout2d  │
+│ 时频-最终FC        │   0.30   │   Dropout  │
+├────────────────────┼──────────┼────────────┤
+│ 融合-Level1权重网络│   0.25   │   Dropout  │
+│ 融合-Level3压缩    │   0.35   │   Dropout  │
+├────────────────────┼──────────┼────────────┤
+│ 分类器-FC1        │   0.40   │   Dropout  │
+│ 分类器-FC2        │   0.30   │   Dropout  │
+└────────────────────┴──────────┴────────────┘
+
+【训练时动态调整】
+def get_adaptive_dropout(epoch, max_epochs):
+    """随训练进行逐渐增加Dropout"""
+    if epoch < max_epochs * 0.3:
+        scale = 0.7  # 前30%训练，减少dropout
+    elif epoch < max_epochs * 0.7:
+        scale = 1.0  # 中间40%训练，标准dropout
+    else:
+        scale = 1.2  # 后30%训练，增加dropout防过拟合
+    return base_dropout_rate * scale
+
+📊 七、数据增强策略设计
+7.1 时域增强 (Time-Domain Augmentation)
+python【增强方法库】
+
+1. 高斯噪声注入 (Gaussian Noise)
+   ────────────────────────────
+   x_aug = x + noise
+   noise ~ N(0, σ²)
+   
+   配置:
+   - σ 从 [0.01, 0.05] 随机选择
+   - 应用概率: 0.6
+   - 目的: 模拟传感器噪声
+
+2. 时间偏移 (Time Shift)
+   ─────────────────────
+   x_aug = shift(x, offset)
+   
+   配置:
+   - offset ∈ [-50, +50] 采样点
+   - 边界: 循环填充
+   - 应用概率: 0.5
+   - 目的: 增强时移不变性
+
+3. 幅值缩放 (Amplitude Scaling)
+   ──────────────────────────
+   x_aug = scale_factor × x
+   
+   配置:
+   - scale_factor ∈ [0.8, 1.2]
+   - 应用概率: 0.7
+   - 目的: 模拟不同负载条件
+
+4. 时间拉伸 (Time Warping)
+   ────────────────────────
+   使用三次样条插值:
+   new_length = original_length × ratio
+   ratio ∈ [0.9, 1.1]
+   
+   配置:
+   - 应用概率: 0.4
+   - 目的: 模拟转速变化
+
+5. 随机掩码 (Random Masking)
+   ─────────────────────────
+   随机将部分时间段置零:
+   mask_ratio = 0.1 (遮蔽10%的点)
+   
+   配置:
+   - 连续掩码长度: 10-30点
+   - 掩码数量: 1-3段
+   - 应用概率: 0.3
+   - 目的: 增强鲁棒性
+
+6. 添加冲击 (Add Impulse)
+   ─────────────────────
+   在随机位置添加脉冲:
+   impulse = A × exp(-decay × t) × cos(2πf×t)
+   
+   配置:
+   - 幅度A ∈ [0.5, 2.0] × max(|x|)
+   - 衰减decay ∈ [50, 200]
+   - 频率f ∈ [1000, 5000] Hz
+   - 数量: 1-2个冲击
+   - 应用概率: 0.3
+   - 目的: 模拟瞬态故障
+7.2 频域增强 (Frequency-Domain Augmentation)
+python1. 频谱遮蔽 (SpecAugment)
+   ──────────────────────
+   在FFT频谱上随机遮蔽频带:
+   
+   - Frequency Masking:
+     随机遮蔽F个连续频率bin
+     F ∈ [5, 20]
+     num_masks ∈ [1, 2]
+     应用概率: 0.4
+   
+   - Magnitude Masking:
+     对某些频率的幅值×0.5
+     应用概率: 0.3
+
+2. 随机滤波 (Random Filtering)
+   ───────────────────────────
+   随机应用带通/带阻滤波器:
+   
+   - 带通: [f1, f2], f1,f2 ∈ [500, 8000] Hz
+   - 带阻: 去除[f1, f2]频带
+   - 应用概率: 0.35
+   - 目的: 模拟不同频段干扰
+
+3. 相位扰动 (Phase Perturbation)
+   ──────────────────────────
+   在频域添加随机相位:
+   X_aug(f) = |X(f)| × exp(j×(∠X(f) + δφ))
+   δφ ~ U[-π/8, π/8]
+   
+   - 应用概率: 0.25
+   - 目的: 增强相位不敏感性
+7.3 Mixup增强
+python【标准Mixup】
+────────────
+def mixup(x1, x2, y1, y2, alpha=0.2):
+    """
+    x1, x2: 两个样本
+    y1, y2: 对应标签
+    alpha: Beta分布参数
+    """
+    λ = np.random.beta(alpha, alpha)
+    
+    x_mix = λ × x1 + (1-λ) × x2
+    y_mix = λ × y1 + (1-λ) × y2
+    
+    return x_mix, y_mix
+
+配置:
+- alpha = 0.2 (较小值，避免过度混合)
+- 应用概率: 0.5 (每个batch有50%概率使用)
+- 只在训练时使用
+
+【Manifold Mixup】(高级版本)
+─────────────────────────
+在特征空间进行混合:
+
+def manifold_mixup(model, x1, x2, y1, y2):
+    # 随机选择混合层 (时域Stage2或融合Level1)
+    mix_layer = random.choice(['stage2', 'fusion_level1'])
+    
+    # 前向到混合层
+    feat1 = model.forward_to_layer(x1, mix_layer)
+    feat2 = model.forward_to_layer(x2, mix_layer)
+    
+    # 在特征空间混合
+    λ = np.random.beta(0.2, 0.2)
+    feat_mix = λ × feat1 + (1-λ) × feat2
+    
+    # 继续前向
+    output = model.forward_from_layer(feat_mix, mix_layer)
+    
+    return output, λ×y1 + (1-λ)×y2
+
+应用概率: 0.3
+7.4 数据增强管道 (Augmentation Pipeline)
+python【训练时的增强策略】
+
+class AugmentationPipeline:
+    """组合多种增强方法"""
+    
+    def __init__(self, mode='train'):
+        self.mode = mode
+        self.augmentations = {
+            'weak': [
+                GaussianNoise(sigma=0.01, p=0.3),
+                AmplitudeScale(range=[0.9, 1.1], p=0.3),
+            ],
+            'medium': [
+                GaussianNoise(sigma=0.03, p=0.5),
+                TimeShift(offset=30, p=0.4),
+                AmplitudeScale(range=[0.8, 1.2], p=0.5),
+                RandomMasking(ratio=0.05, p=0.3),
+            ],
+            'strong': [
+                GaussianNoise(sigma=0.05, p=0.6),
+                TimeShift(offset=50, p=0.5),
+                AmplitudeScale(range=[0.7, 1.3], p=0.6),
+                TimeWarping(ratio=[0.9, 1.1], p=0.4),
+                RandomMasking(ratio=0.1, p=0.4),
+                AddImpulse(num=[1,2], p=0.3),
+                RandomFiltering(p=0.35),
+            ]
+        }
+    
+    def __call__(self, x, intensity='medium'):
+        """
+        intensity: 'weak' | 'medium' | 'strong'
+        """
+        if self.mode != 'train':
+            return x  # 验证/测试时不增强
+        
+        aug_list = self.augmentations[intensity]
+        x_aug = x.copy()
+        
+        for aug_fn in aug_list:
+            if np.random.rand() < aug_fn.p:
+                x_aug = aug_fn(x_aug)
+        
+        return x_aug
+
+【使用策略】
+──────────
+- 对比学习预训练: 使用'strong'增强
+- 有监督训练前期 (epoch 1-30): 'weak'
+- 有监督训练中期 (epoch 31-60): 'medium'  
+- 有监督训练后期 (epoch 61-end): 'strong'
+
+- 验证集/测试集: 不使用增强
+
+🎯 八、损失函数设计
+python【总损失函数】多任务联合优化
+
+L_total = λ1·L_focal + λ2·L_arcface + λ3·L_center + λ4·L_contrast
+
+┌─────────────────────────────────────────────────────┐
+│ 1. Focal Loss (主分类损失)                           │
+├─────────────────────────────────────────────────────┤
+│ 解决类别不平衡问题                                    │
+│                                                      │
+│ FL(p_t) = -α_t × (1-p_t)^γ × log(p_t)              │
+│                                                      │
+│ 其中:                                                │
+│ - p_t: 真实类别的预测概率                            │
+│ - α_t: 类别权重 (根据样本数倒数设置)                  │
+│ - γ: 聚焦参数 = 2.0                                 │
+│                                                      │
+│ 配置:                                                │
+│ - α = [根据各类样本数自动计算]                        │
+│ - γ = 2.0 (标准值)                                  │
+│ - reduction = 'mean'                                │
+│                                                      │
+│ 权重: λ1 = 1.0                                      │
+└─────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────┐
+│ 2. ArcFace Loss (度量学习损失)                        │
+├─────────────────────────────────────────────────────┤
+│ 增大类间距，缩小类内距                                 │
+│                                                      │
+│ L_arc = -log( exp(s·cos(θ_yi + m)) /               │
+│              Σ exp(s·cos(θ_j)) )                    │
+│                                                      │
+│ 其中:                                                │
+│ - s: scale参数 = 30.0                               │
+│ - m: margin参数 = 0.50                              │
+│ - θ_yi: 正确类别的角度                               │
+│                                                      │
+│ 只在训练时使用，推理时使用softmax                      │
+│                                                      │
+│ 权重: λ2 = 0.5                                      │
+└─────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────┐
+│ 3. Center Loss (中心损失)                            │
+├─────────────────────────────────────────────────────┤
+│ 最小化类内特征到类中心的距离                           │
+│                                                      │
+│ L_center = (1/2) × Σ ||f_i - c_yi||²               │
+│                                                      │
+│ 其中:                                                │
+│ - f_i: 第i个样本的特征                               │
+│ - c_yi: 第i个样本所属类的中心                         │
+│ - 中心c通过移动平均更新:                              │
+│   c_new = 0.95×c_old + 0.05×mean(features_of_class)│
+│                                                      │
+│ 权重: λ3 = 0.01 (较小值，辅助作用)                   │
+└─────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────┐
+│ 4. Contrastive Loss (对比损失，仅预训练时)             │
+├─────────────────────────────────────────────────────┤
+│ NT-Xent (Normalized Temperature Crossentropy)       │
+│                                                      │
+│ L_contrast = -log( exp(sim(z_i,z_j)/τ) /           │
+│                   Σ exp(sim(z_i,z_k)/τ) )          │
+│                                                      │
+│ 配置:                                                │
+│ - τ = 0.07 (温度参数)                               │
+│ - 只在预训练阶段使用                                  │
+│                                                      │
+│ 权重: λ4 = 1.0 (预训练时), 0.0 (微调时)             │
+└─────────────────────────────────────────────────────┘
+
+【动态权重调整】
+────────────────
+epoch < 30: 
+    λ1=1.0, λ2=0.3, λ3=0.005, λ4=0.0
+
+epoch 30-60:
+    λ1=1.0, λ2=0.5, λ3=0.01, λ4=0.0
+
+epoch > 60:
+    λ1=1.0, λ2=0.7, λ3=0.015, λ4=0.0
+    (后期增大度量学习权重)
+Focal Loss类别权重计算
+pythondef compute_focal_weight(train_loader, num_classes=6):
+    """自动计算各类权重"""
+    
+    # 统计各类样本数
+    class_counts = np.zeros(num_classes)
+    for _, labels in train_loader:
+        for label in labels:
+            class_counts[label] += 1
+    
+    # 计算权重 (有效样本数方法)
+    total = class_counts.sum()
+    class_weights = total / (num_classes * class_counts)
+    
+    # 归一化到[0.5, 2.0]范围
+    class_weights = np.clip(class_weights, 0.5, 2.0)
+    
+    return torch.FloatTensor(class_weights)
+
+# 使用示例
+focal_alpha = compute_focal_weight(train_loader)
+focal_loss = FocalLoss(alpha=focal_alpha, gamma=2.0)
+
+📈 九、训练策略与超参数
+python【完整训练流程】
+
+════════════════════════════════════════════════════════
+阶段1: 对比学习预训练 (Contrastive Pre-training)
+════════════════════════════════════════════════════════
+目标: 学习通用的判别性特征表示
+
+Epochs: 30
+Batch Size: 64
+Optimizer: AdamW
+  - lr: 1e-3
+  - weight_decay: 1e-4
+  - betas: (0.9, 0.999)
+
+LR Scheduler: CosineAnnealingWarmRestarts
+  - T_0: 10 (每10个epoch重启一次)
+  - T_mult: 1
+  - eta_min: 1e-6
+  - warmup_epochs: 3
+
+Loss: L_contrast (NT-Xent)
+  - temperature: 0.07
+
+Data Augmentation: Strong
+  - 每个样本生成2个强增强版本
+  - Mixup概率: 0.0 (预训练不用Mixup)
+
+Early Stopping: 
+  - patience: 8
+  - monitor: contrastive_loss
+
+输出: 预训练的backbone权重
+
+════════════════════════════════════════════════════════
+阶段2: 有监督微调 (Supervised Fine-tuning)
+════════════════════════════════════════════════════════
+目标: 在预训练基础上学习分类任务
+
+Epochs: 100
+Batch Size: 32
+Optimizer: AdamW
+  - lr: 5e-4 (比预训练小)
+  - weight_decay: 5e-4 (比预训练大，防过拟合)
+  - betas: (0.9, 0.999)
+
+LR Scheduler: 组合式
+  - Warmup: 前5 epochs, linear增长到peak_lr
+  - CosineAnnealing: 5-80 epochs
+  - ReduceLROnPlateau: 80+ epochs
+    - monitor: val_loss
+    - patience: 5
+    - factor: 0.5
+
+Loss: L_total = L_focal + 0.5×L_arcface + 0.01×L_center
+  - 动态调整权重 (见前文)
+
+Data Augmentation: 渐进式
+  - epoch 1-30: Weak
+  - epoch 31-70: Medium
+  - epoch 71+: Strong
+  - Mixup概率: 0.5
+
+Regularization:
+  - Label Smoothing: ε=0.1
+  - Mixup: α=0.2
+  - Dropout: 见前文分层设计
+  - Weight Decay: 5e-4
+
+Early Stopping:
+  - patience: 15
+  - monitor: val_acc
+  - restore_best_weights: True
+
+Gradient Clipping:
+  - max_norm: 1.0
+  - 防止梯度爆炸
+
+════════════════════════════════════════════════════════
+阶段3: 知识蒸馏 (可选，Knowledge Distillation)
+════════════════════════════════════════════════════════
+前置: 先训练一个Teacher模型(通道数×1.5)
+
+Epochs: 50
+Batch Size: 32
+Optimizer: AdamW
+  - lr: 3e-4 (更小的学习率)
+
+Loss: L_student = 0.3×L_task + 0.7×L_distill
+  - L_task: Focal + ArcFace
+  - L_distill: Soft + Feature + Relation
+
+Temperature: 4.0
+
+Data Augmentation: Medium (稳定为主)
+
+════════════════════════════════════════════════════════
+关键超参数总结
+════════════════════════════════════════════════════════
+
+【网络结构】
+- 时域分支通道: [32, 64, 128]
+- 频域分支通道: [64, 128]
+- 时频分支通道: [32, 64, 128]
+- Bi-GRU hidden: 128
+- Fusion输出: 128
+- Classifier hidden: [256, 128]
+
+【训练参数】
+- 预训练lr: 1e-3, epochs: 30
+- 微调lr: 5e-4, epochs: 100
+- Batch size: 32 (微调), 64 (预训练)
+- Weight decay: 5e-4
+- Gradient clip: 1.0
+
+【损失权重】
+- Focal: 1.0
+- ArcFace: 0.3→0.5→0.7 (渐进)
+- Center: 0.005→0.01→0.015
+- Contrastive: 1.0 (仅预训练)
+
+【增强参数】
+- Gaussian noise σ: [0.01, 0.05]
+- Time shift: [-50, +50] points
+- Amplitude scale: [0.7, 1.3]
+- Mixup α: 0.2
+- SpecAugment F: [5, 20]
+
+【注意力参数】
+- CBAM reduction: 8
+- SE reduction: 8
+- Multi-head attention heads: 4
+- ArcFace s: 30.0, m: 0.50
+
+【正则化】
+- Label smoothing: 0.1
+- Dropout: 见分层设计
+- Focal gamma: 2.0
+
+🔍 十、模型评估与验证策略
+python【验证指标】
+
+1. 基础指标
+   ─────────
+   - Accuracy (总体准确率)
+   - Precision, Recall, F1-Score (每类)
+   - Confusion Matrix (混淆矩阵)
+   - ROC-AUC (One-vs-Rest)
+
+2. 特征可视化
+   ──────────
+   - t-SNE降维可视化 (融合特征F_fused)
+   - 类中心距离矩阵
+   - 类内/类间距离比
+
+3. 注意力可视化
+   ──────────
+   - 模态权重分布 (w_t, w_f, w_tf)
+   - CBAM空间注意力热图
+   - 时序注意力权重曲线
+
+4. 鲁棒性测试
+   ──────────
+   - 噪声鲁棒性: 添加不同SNR噪声测试
+   - 域泛化: 测试集与训练集不同工况
+   - 对抗攻击: FGSM测试
+
+【验证流程】
+
+每个epoch结束:
+├─ 在验证集计算所有指标
+├─ 保存最佳模型 (基于val_acc)
+├─ 绘制训练曲线 (loss, acc)
+├─ 每5个epoch保存checkpoint
+└─ 记录各模态权重统计
+
+训练结束:
+├─ 加载最佳模型
+├─ 在测试集完整评估
+├─ 绘制混淆矩阵
+├─ t-SNE可视化
+├─ 生成分类报告
+└─ 保存所有结果
+```
+
+---
+
+## 💡 十一、实施建议与注意事项
+```
+【优先级建议】
+
+P0 (必须实现):
+✓ 三分支架构 (时域+频域+时频)
+✓ 基础注意力机制 (至少CBAM)
+✓ 简单特征融合 (Concat + FC)
+✓ Focal Loss
+✓ 基础数据增强 (噪声+缩放)
+
+P1 (强烈推荐):
+✓ 多级自适应融合
+✓ 对比学习预训练
+✓ ArcFace度量学习
+✓ 渐进式数据增强
+✓ 动态Dropout
+
+P2 (性能优化):
+✓ 知识蒸馏
+✓ Mixup/Manifold Mixup
+✓ Center Loss
+✓ 模型集成
+
+【常见陷阱】
+
+1. 过拟合风险
+   ───────────
+   表现: 训练acc>95%，验证acc<80%
+   解决:
+   - 增大Dropout率
+   - 加强数据增强
+   - 减少模型容量
+   - 早停策略
+
+2. 类别不平衡
+   ──────────
+   表现: 某些类recall很低
+   解决:
+   - 调整Focal Loss权重
+   - 对少数类过采样
+   - 使用class-balanced loss
+
+3. 梯度消失/爆炸
+   ─────────────
+   表现: loss不下降或NaN
+   解决:
+   - 梯度裁剪 (max_norm=1.0)
+   - 调整学习率
+   - 检查BN位置
+   - 使用residual连接
+
+4. 特征融合不充分
+   ───────────────
+   表现: 单分支性能 > 融合性能
+   解决:
+   - 增加交互层
+   - 调整融合权重
+   - 检查各分支是否学到不同特征
+
+【调试技巧】
+
+1. 先用小数据集(100样本)过拟合
+   → 验证模型capacity足够
+
+2. 固定种子，复现结果
+   → 排除随机性干扰
+
+3. 逐步添加模块
+   → 定位性能瓶颈
+
+4. 可视化中间特征
+   → 检查特征质量
+
+5. 对比消融实验
+   → 验证各模块贡献
+```
+
+---
+
+## 📦 总结：模型亮点
+```
+【创新点】
+
+1. 三分支互补架构
+   - 时域捕捉冲击
+   - 频域捕捉谐波
+   - 时频捕捉演变
+
+2. 三级渐进融合
+   - Level 1: 模态重要性学习
+   - Level 2: 跨模态交互
+   - Level 3: 多粒度整合
+
+3. 联合训练策略
+   - 对比学习预训练
+   - 多任务联合优化
+   - 知识蒸馏压缩
+
+4. 自适应正则化
+   - 分层Dropout
+   - 动态增强强度
+   - 渐进式权重调整
+
+【预期性能】
+
+在你的6类轴承数据上:
+- 验证集准确率: 95-98%
+- 测试集准确率: 93-96%
+- 推理速度: <5ms/sample (GPU)
+- 模型大小: ~2MB
+- 参数量: ~2M
