@@ -53,7 +53,7 @@ class MultimodalBearingDiagnosisModel(nn.Module):
     多模态轴承故障诊断模型（支持对比学习）
     
     架构流程:
-    输入信号 → 三分支Backbone (时域/频域/时频) → 多级融合 → 分类/对比学习
+    输入特征 → 三分支Backbone (时域/频域/时频) → 多级融合 → 分类/对比学习
     
     训练流程:
     1. 对比学习预训练: 使用projection_head,不使用classifier
