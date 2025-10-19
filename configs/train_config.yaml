@@ -1,0 +1,217 @@
+# 训练超参数配置文件
+# Training Hyperparameters Configuration
+
+# 训练模式选择
+training_mode:
+  # 训练流程: 'pretrain_finetune' 或 'direct_train'
+  # pretrain_finetune: 对比学习预训练 + 有监督微调
+  # direct_train: 直接有监督训练(跳过预训练)
+  pipeline: 'pretrain_finetune'  # 'pretrain_finetune' | 'direct_train'
+  
+  # 是否启用mixup
+  use_mixup: true
+  
+  # 是否启用特征层mixup(暂时不启用)
+  use_feature_mixup: false
+
+
+# 对比学习预训练阶段
+pretrain:
+  # 训练轮数
+  epochs: 30
+  
+  # Batch size
+  batch_size: 64
+  
+  # 优化器
+  optimizer:
+    type: 'adamw'  # 'adam', 'adamw', 'sgd'
+    lr: 0.001
+    weight_decay: 0.0001
+    betas: [0.9, 0.999]
+    momentum: 0.9  # 仅SGD使用
+  
+  # 学习率调度器
+  scheduler:
+    type: 'cosine_warm_restarts'  # 'cosine', 'cosine_warm_restarts', 'step', 'reduce_on_plateau'
+    # CosineAnnealingWarmRestarts参数
+    T_0: 10  # 重启周期
+    T_mult: 1
+    eta_min: 0.000001
+    # Warmup
+    warmup_epochs: 3
+    warmup_start_lr: 0.0001
+  
+  # 对比学习损失
+  loss:
+    type: 'ntxent'  # 'ntxent' | 'supcon'
+    temperature: 0.07
+  
+  # 早停
+  early_stopping:
+    enable: true
+    patience: 8
+    monitor: 'loss'  # 预训练监控loss
+    mode: 'min'
+  
+  # 梯度裁剪
+  gradient_clip:
+    enable: true
+    max_norm: 1.0
+
+
+# 有监督微调阶段
+finetune:
+  # 训练轮数
+  epochs: 100
+  
+  # Batch size
+  batch_size: 32
+  
+  # 优化器
+  optimizer:
+    type: 'adamw'
+    lr: 0.0005  # 比预训练小
+    weight_decay: 0.0005  # 比预训练大,防过拟合
+    betas: [0.9, 0.999]
+  
+  # 学习率调度器(组合式)
+  scheduler:
+    type: 'combined'  # 组合式调度器
+    # Warmup阶段(前5 epochs)
+    warmup_epochs: 5
+    warmup_start_lr: 0.00001
+    # CosineAnnealing阶段(5-80 epochs)
+    cosine_epochs: 75
+    eta_min: 0.000001
+    # ReduceLROnPlateau阶段(80+ epochs)
+    plateau_patience: 5
+    plateau_factor: 0.5
+    plateau_min_lr: 0.0000001
+  
+  # 损失函数配置
+  loss:
+    # 是否使用渐进式损失(动态调整权重)
+    use_progressive: true
+    
+    # Focal Loss
+    focal:
+      weight: 1.0
+      gamma: 2.0
+      # 类别权重计算方法: 'effective_num', 'inverse_freq', 'sqrt_inv_freq', None
+      class_weight_method: 'effective_num'
+      # 类别样本数(用于计算类别权重)
+      class_counts: [160, 120, 180, 150, 100, 150]  # [normal, inner_wear, outer_missing, roller_broken, roller_wear, inner_broken]
+    
+    # ArcFace Loss (渐进式调整)
+    arcface:
+      weight_init: 0.3   # 初始权重
+      weight_max: 0.7    # 最大权重
+      # 权重调整: epoch < 30: 0.3, 30-60: 0.5, 60+: 0.7
+    
+    # Label Smoothing
+    label_smoothing: 0.1
+  
+  # 渐进式训练策略
+  progressive:
+    # Focal Loss gamma渐进调整
+    focal_gamma_schedule:
+      enable: false  # 暂不启用gamma调整
+      init: 2.0
+      min: 1.0
+  
+  # 早停
+  early_stopping:
+    enable: true
+    patience: 15
+    monitor: 'val_acc'
+    mode: 'max'
+    restore_best_weights: true
+  
+  # 梯度裁剪
+  gradient_clip:
+    enable: true
+    max_norm: 1.0
+  
+  # Backbone冻结策略
+  freeze_strategy:
+    # 是否在微调初期冻结backbone
+    enable: false
+    # 冻结的epoch数
+    freeze_epochs: 0
+    # 冻结比例
+    freeze_ratio: 0.5
+
+
+# Mixup参数
+mixup:
+  # Alpha参数(控制混合程度)
+  alpha: 0.1
+  # 应用概率
+  prob: 0.5
+  # 是否在特征层应用(暂不启用)
+  feature_mixup: false
+
+
+# 数据加载
+data:
+  # 数据目录
+  train_dir: 'raw_datasets/train'
+  test_dir: 'raw_datasets/test'
+  
+  # 窗口参数
+  window_size: 512
+  window_step: 256
+  
+  # 时频变换方法: 'stft' | 'cwt'
+  timefreq_method: 'stft'
+  
+  # K-fold交叉验证
+  n_folds: 5
+  current_fold: 0
+  
+  # DataLoader参数
+  num_workers: 4
+  pin_memory: true
+  
+  # 是否缓存数据到内存
+  cache_data: true
+
+
+# 实验管理
+experiment:
+  # 实验名称
+  name: 'bearing_diagnosis'
+  
+  # 实验保存目录
+  save_dir: 'experiments/runs'
+  
+  # 日志
+  logging:
+    # 是否使用tensorboard
+    use_tensorboard: true
+    # 日志保存频率(每N个batch记录一次)
+    log_interval: 10
+  
+  # 可视化
+  visualization:
+    # 是否保存训练曲线
+    save_curves: true
+    # 是否保存混淆矩阵
+    save_confusion_matrix: true
+    # 是否保存t-SNE可视化
+    save_tsne: true
+    # 是否保存注意力可视化
+    save_attention: true
+
+
+# 随机种子(保证可复现)
+seed: 42
+
+
+# 设备
+device:
+  # 'cuda' | 'cpu' | 'cuda:0'
+  type: 'cuda'
+  # 是否使用混合精度训练
+  use_amp: false

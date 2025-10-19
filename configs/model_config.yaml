@@ -1,0 +1,134 @@
+# 模型结构配置文件
+# Model Architecture Configuration
+
+# 模型基本参数
+model:
+  # 模型规模: 'tiny', 'small', 'medium', 'large'
+  config: 'medium'
+  
+  # 输入序列长度
+  seq_len: 512
+  
+  # 类别数量
+  num_classes: 6
+  
+  # 融合类型: 'simple', 'adaptive', 'hierarchical'
+  fusion_type: 'hierarchical'
+  
+  # 分类头类型: 'softmax', 'arcface', 'dual'
+  head_type: 'dual'
+
+
+# 三分支架构参数
+backbone:
+  # 时域分支
+  temporal:
+    # CNN通道数: [layer1, layer2, layer3]
+    channels: [32, 64, 128]
+    # BiGRU隐藏层维度
+    gru_hidden: 128
+    # Dropout率
+    dropout: 0.3
+  
+  # 频域分支  
+  frequency:
+    # CNN通道数: [layer1, layer2]
+    channels: [64, 128]
+    # BiGRU隐藏层维度
+    gru_hidden: 128
+    # Dropout率
+    dropout: 0.25
+  
+  # 时频分支
+  timefreq:
+    # CNN通道数: [layer1, layer2, layer3]
+    channels: [32, 64, 128]
+    # Dropout率
+    dropout: 0.25
+
+
+# 特征融合参数
+fusion:
+  # 融合后输出维度
+  output_dim: 128
+  
+  # 多级融合的dropout
+  dropout: 0.3
+  
+  # 注意力机制reduction ratio
+  attention_reduction: 8
+
+
+# 分类头参数
+classifier:
+  # Softmax分类器
+  softmax:
+    # 隐藏层维度: [layer1, layer2]
+    hidden_dims: [256, 128]
+    # Dropout率
+    dropout: 0.4
+    # 是否使用Batch Normalization
+    use_bn: true
+  
+  # ArcFace分类器
+  arcface:
+    # 特征维度(嵌入维度)
+    embedding_dim: 128
+    # scale参数
+    scale: 30.0
+    # margin参数
+    margin: 0.50
+    # 是否easy_margin
+    easy_margin: false
+
+
+# 注意力机制参数
+attention:
+  # CBAM
+  cbam:
+    reduction: 8
+    kernel_size: 7
+  
+  # SE (Squeeze-and-Excitation)
+  se:
+    reduction: 8
+  
+  # EMA (Efficient Multi-scale Attention)
+  ema:
+    num_heads: 4
+
+
+# 预训练模型加载
+pretrain:
+  # 是否使用预训练权重
+  use_pretrain: false
+  
+  # 预训练权重路径
+  checkpoint_path: null
+  
+  # 是否冻结backbone
+  freeze_backbone: false
+  
+  # 冻结比例(0.0-1.0)
+  freeze_ratio: 0.5
+
+
+# 模型保存参数
+checkpoint:
+  # 是否保存完整模型(包括优化器状态)
+  save_optimizer: true
+  
+  # 保存频率(每N个epoch保存一次)
+  save_frequency: 5
+  
+  # 最多保留N个checkpoint
+  keep_last_n: 3
+  
+  # 是否保存最佳模型
+  save_best: true
+  
+  # 监控指标: 'val_loss', 'val_acc', 'val_f1'
+  monitor_metric: 'val_acc'
+  
+  # 监控模式: 'min' 或 'max'
+  monitor_mode: 'max'
