@@ -1,9 +1,8 @@
 bearing-fault-diagnosis/
 │
 ├── configs/                          # 配置文件目录
-│   ├── config.yaml                   # 主配置文件
-│   ├── model_config.yaml             # 模型结构配置
-│   ├── train_config.yaml             # 训练超参数配置
+│   ├── model_config.yaml                   # 模型结构配置
+│   ├── train_config.yaml                      # 训练超参数配置
 │   └── augmentation_config.yaml      # 数据增强配置
 │
 ├── raw_datasets/                 # 原始数据（√）
@@ -76,12 +75,12 @@ bearing-fault-diagnosis/
 ├── training/                         # 训练相关
 │   ├── __init__.py
 │   │
-│   ├── pretrain/                     # 预训练
+│   ├── pretrain/                     # 预训练，对比学习
 │   │   ├── __init__.py
 │   │   ├── contrastive_trainer.py    # 对比学习训练器
 │   │   └── pretrain_launcher.py      # 预训练启动脚本
 │   │
-│   ├── finetune/                     # 微调
+│   ├── finetune/                     # 微调，有监督训练
 │   │   ├── __init__.py
 │   │   ├── supervised_trainer.py     # 有监督训练器
 │   │   └── finetune_launcher.py      # 微调启动脚本
@@ -91,7 +90,7 @@ bearing-fault-diagnosis/
 │   ├── scheduler_factory.py          # 学习率调度器工厂
 │   └── callbacks.py                  # 训练回调(早停, 保存, etc.)
 │
-├── utils/                            # 工具函数
+├── utils/                            # 工具函数（√）
 │   ├── __init__.py
 │   ├── metrics.py                    # 评估指标
 │   ├── visualization.py              # 可视化工具
