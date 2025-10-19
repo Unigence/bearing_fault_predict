@@ -69,7 +69,6 @@ bearing-fault-diagnosis/
 ├── losses/                           # 损失函数
 │   ├── __init__.py
 │   ├── focal_loss.py                 # Focal Loss
-│   ├── arcface_loss.py               # ArcFace Loss
 │   ├── center_loss.py                # Center Loss
 │   ├── contrastive_loss.py           # 对比学习损失
 │   └── combined_loss.py              # 组合损失
