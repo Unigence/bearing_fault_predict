@@ -11,6 +11,15 @@ from .signal_transform import (
     create_transform,
 )
 
+from .med import (
+    MED,
+)
+
+from .vmd import (
+    VMD,
+    FeatureSelector,
+)
+
 __all__ = [
     'SignalTransform',
     'FFTTransform',
@@ -18,4 +27,8 @@ __all__ = [
     'CWTTransform',
     'IdentityTransform',
     'create_transform',
+
+    MED,
+    VMD,
+    FeatureSelector,
 ]
