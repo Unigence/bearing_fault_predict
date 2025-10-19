@@ -56,7 +56,7 @@ bearing-fault-diagnosis/
 ├── datasets/                         # PyTorch Dataset定义
 │   ├── __init__.py
 │   ├── bearing_dataset.py            # 主数据集类（√）
-│   ├── contrastive_dataset.py        # 对比学习数据集
+│   ├── contrastive_dataset.py        # 对比学习数据集（√）
 │   └── dataloader.py                 # DataLoader创建
 │
 ├── augmentation/                     # 数据增强（√）
@@ -66,7 +66,7 @@ bearing-fault-diagnosis/
 │   ├── mixup.py                            # Mixup相关
 │   └── augmentation_pipeline.py      # 增强管道
 │
-├── losses/                           # 损失函数
+├── losses/                           # 损失函数（√）
 │   ├── __init__.py
 │   ├── focal_loss.py                 # Focal Loss
 │   ├── center_loss.py                # Center Loss
