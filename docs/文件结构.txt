@@ -134,7 +134,6 @@ bearing-fault-diagnosis/
 │   └── test_dataset.py               # 测试数据集
 │
 ├── docs/                             # 文档
-│   ├── README.md
 │   ├── model_architecture.md         # 模型架构文档
 │   ├── training_guide.md             # 训练指南
 │   └── api_reference.md              # API文档
