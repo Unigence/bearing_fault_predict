@@ -104,7 +104,7 @@ bearing-fault-diagnosis/
 │   ├── tsne_visualization.py         # t-SNE可视化
 │   └── attention_visualization.py    # 注意力可视化
 │
-├── runs/                         # 训练运行记录
+├── experiments/runs                       # 训练运行记录
 │   ├── pretrain_20250101_120000/
 │   │   ├── config.yaml
 │   │   ├── logs/
