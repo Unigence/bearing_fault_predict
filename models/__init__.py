@@ -25,6 +25,10 @@ from .modules import (
     MultiHeadPooling1D
 )
 
+from multimodal_model import (
+    create_model
+)
+
 __all__ = [
     # Backbone branches
     'TemporalBranch',
@@ -46,4 +50,7 @@ __all__ = [
     'GlobalPooling1D',
     'GlobalPooling2D',
     'MultiHeadPooling1D',
+
+    # Ensembled
+    'create_model',
 ]
