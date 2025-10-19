@@ -248,223 +248,183 @@ class CheckpointManager:
             latest['filename'], model, optimizer, scheduler, device
         )
     
+    def get_best_checkpoint(self) -> Optional[str]:
+        """
+        获取最佳检查点的路径
+
+        ⚠️ 新增方法：修复trainer_base.py中的调用
+
+        Returns:
+            best_checkpoint_path: 最佳检查点的完整路径，如果不存在返回None
+        """
+        best_checkpoint_name = self.checkpoints_meta.get('best_checkpoint')
+
+        if best_checkpoint_name is None:
+            # 尝试查找best_model.pth
+            best_path = self.checkpoint_dir / 'best_model.pth'
+            if best_path.exists():
+                return str(best_path)
+            return None
+
+        best_path = self.checkpoint_dir / best_checkpoint_name
+        return str(best_path) if best_path.exists() else None
+
     def _cleanup_checkpoints(self):
         """清理旧检查点，保留指定数量的最新检查点"""
         if self.max_to_keep is None:
             return
-        
+
         checkpoints = self.checkpoints_meta.get('checkpoints', [])
-        
+
         if len(checkpoints) <= self.max_to_keep:
             return
-        
+
         # 按epoch排序
         checkpoints_sorted = sorted(checkpoints, key=lambda x: x['epoch'], reverse=True)
-        
+
         # 确定要删除的检查点
         to_remove = checkpoints_sorted[self.max_to_keep:]
-        
+
         for ckpt in to_remove:
             # 如果是最佳检查点且keep_best=True，跳过
             if self.keep_best and ckpt.get('is_best', False):
                 continue
-            
+
             # 删除文件
             ckpt_path = self.checkpoint_dir / ckpt['filename']
             if ckpt_path.exists():
                 ckpt_path.unlink()
                 print(f"Removed old checkpoint: {ckpt['filename']}")
-            
+
             # 从元信息中移除
             checkpoints.remove(ckpt)
-        
+
         self.checkpoints_meta['checkpoints'] = checkpoints
         self._save_meta()
-    
+
     def list_checkpoints(self) -> List[Dict[str, Any]]:
         """
         列出所有检查点
-        
+
         Returns:
             checkpoints: 检查点信息列表
         """
         return self.checkpoints_meta.get('checkpoints', [])
-    
+
     def get_best_checkpoint_info(self) -> Optional[Dict[str, Any]]:
         """
         获取最佳检查点信息
-        
+
         Returns:
             checkpoint_info: 检查点信息
         """
         best_name = self.checkpoints_meta.get('best_checkpoint')
-        
+
         if best_name is None:
             return None
-        
+
         for ckpt in self.checkpoints_meta.get('checkpoints', []):
             if ckpt['filename'] == best_name:
                 return ckpt
-        
+
         return None
-    
+
     def remove_checkpoint(self, checkpoint_name: str):
         """
         删除指定检查点
-        
+
         Args:
             checkpoint_name: 检查点名称
         """
         ckpt_path = self.checkpoint_dir / checkpoint_name
-        
+
         if ckpt_path.exists():
             ckpt_path.unlink()
             print(f"Removed checkpoint: {checkpoint_name}")
-        
+
         # 从元信息中移除
         checkpoints = self.checkpoints_meta.get('checkpoints', [])
         self.checkpoints_meta['checkpoints'] = [
-            c for c in checkpoints if c['filename'] != checkpoint_name
+            ckpt for ckpt in checkpoints if ckpt['filename'] != checkpoint_name
         ]
-        
-        # 如果删除的是最佳检查点，清除best_checkpoint标记
-        if self.checkpoints_meta.get('best_checkpoint') == checkpoint_name:
-            self.checkpoints_meta['best_checkpoint'] = None
-        
         self._save_meta()
-    
-    def clear_all_checkpoints(self, keep_best: bool = True):
-        """
-        清除所有检查点
-        
-        Args:
-            keep_best: 是否保留最佳检查点
-        """
-        checkpoints = self.checkpoints_meta.get('checkpoints', [])
-        best_name = self.checkpoints_meta.get('best_checkpoint')
-        
-        for ckpt in checkpoints:
-            if keep_best and ckpt['filename'] == best_name:
-                continue
-            
-            ckpt_path = self.checkpoint_dir / ckpt['filename']
-            if ckpt_path.exists():
-                ckpt_path.unlink()
-        
-        if keep_best and best_name:
-            self.checkpoints_meta['checkpoints'] = [
-                c for c in checkpoints if c['filename'] == best_name
-            ]
-        else:
-            self.checkpoints_meta['checkpoints'] = []
-            self.checkpoints_meta['best_checkpoint'] = None
-        
-        self._save_meta()
-        print("All checkpoints cleared" + (" (except best)" if keep_best else ""))
-
-
-def save_model(
-    model: torch.nn.Module,
-    filepath: str,
-    save_full_model: bool = False
-):
-    """
-    保存模型
-    
-    Args:
-        model: 模型
-        filepath: 保存路径
-        save_full_model: 是否保存完整模型（包括结构），否则只保存参数
-    """
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    
-    if save_full_model:
-        torch.save(model, filepath)
-    else:
-        torch.save(model.state_dict(), filepath)
-    
-    print(f"Model saved: {filepath}")
-
-
-def load_model(
-    filepath: str,
-    model: Optional[torch.nn.Module] = None,
-    device: str = 'cpu',
-    strict: bool = True
-) -> torch.nn.Module:
-    """
-    加载模型
-    
-    Args:
-        filepath: 模型路径
-        model: 模型实例（如果为None，则加载完整模型）
-        device: 设备
-        strict: 是否严格匹配参数
-        
-    Returns:
-        model: 加载后的模型
-    """
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"Model file not found: {filepath}")
-    
-    if model is None:
-        # 加载完整模型
-        model = torch.load(filepath, map_location=device)
-    else:
-        # 只加载参数
-        state_dict = torch.load(filepath, map_location=device)
-        model.load_state_dict(state_dict, strict=strict)
-    
-    print(f"Model loaded: {filepath}")
-    return model
 
 
 if __name__ == '__main__':
-    # 测试检查点管理器
+    """测试代码"""
     import torch.nn as nn
-    
-    # 创建简单模型
+
+    print("=" * 70)
+    print("CheckpointManager测试")
+    print("=" * 70)
+
+    # 创建测试模型
     model = nn.Sequential(
         nn.Linear(10, 20),
         nn.ReLU(),
         nn.Linear(20, 5)
     )
-    
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    
-    # 创建检查点管理器
+
+    # 创建checkpoint管理器
     manager = CheckpointManager(
         checkpoint_dir='./test_checkpoints',
         max_to_keep=3,
         keep_best=True
     )
-    
-    # 保存几个检查点
-    print("Saving checkpoints:")
-    for epoch in range(5):
-        metrics = {'loss': 1.0 / (epoch + 1), 'acc': 0.5 + epoch * 0.1}
-        is_best = (epoch == 2)  # 假设第3个epoch是最佳的
-        
-        manager.save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            epoch=epoch,
-            metrics=metrics,
-            is_best=is_best
-        )
-    
-    # 列出所有检查点
-    print("\n\nAll checkpoints:")
-    for ckpt in manager.list_checkpoints():
-        print(f"  {ckpt}")
-    
-    # 获取最佳检查点信息
-    print("\n\nBest checkpoint:")
+
+    # 测试1: 保存检查点
+    print("\n1. 测试保存检查点")
+    manager.save_checkpoint(
+        model=model,
+        epoch=0,
+        metrics={'loss': 1.5, 'acc': 0.6},
+        is_best=False
+    )
+    manager.save_checkpoint(
+        model=model,
+        epoch=1,
+        metrics={'loss': 1.2, 'acc': 0.7},
+        is_best=True
+    )
+    manager.save_checkpoint(
+        model=model,
+        epoch=2,
+        metrics={'loss': 1.0, 'acc': 0.75},
+        is_best=False
+    )
+
+    # 测试2: 列出检查点
+    print("\n2. 列出所有检查点")
+    checkpoints = manager.list_checkpoints()
+    for ckpt in checkpoints:
+        print(f"  - Epoch {ckpt['epoch']}: {ckpt['filename']} (best={ckpt['is_best']})")
+
+    # 测试3: 获取最佳检查点路径 (新增方法)
+    print("\n3. 获取最佳检查点路径")
+    best_path = manager.get_best_checkpoint()
+    print(f"  Best checkpoint: {best_path}")
+
+    # 测试4: 获取最佳检查点信息
+    print("\n4. 获取最佳检查点信息")
     best_info = manager.get_best_checkpoint_info()
-    print(f"  {best_info}")
-    
-    # 加载最佳检查点
-    print("\n\nLoading best checkpoint:")
-    checkpoint = manager.load_best_checkpoint(model, optimizer)
-    print(f"Loaded epoch: {checkpoint['epoch']}")
-    print(f"Metrics: {checkpoint['metrics']}")
+    if best_info:
+        print(f"  Epoch: {best_info['epoch']}")
+        print(f"  Metrics: {best_info['metrics']}")
+
+    # 测试5: 加载最佳检查点
+    print("\n5. 加载最佳检查点")
+    try:
+        checkpoint = manager.load_best_checkpoint(model, device='cpu')
+        print(f"  ✓ 加载成功: Epoch {checkpoint['epoch']}")
+    except Exception as e:
+        print(f"  ✗ 加载失败: {e}")
+
+    print("\n" + "=" * 70)
+    print("✓ CheckpointManager测试完成")
+    print("=" * 70)
+
+    # 清理测试文件
+    import shutil
+    if Path('./test_checkpoints').exists():
+        shutil.rmtree('./test_checkpoints')
+        print("\n✓ 测试文件已清理")

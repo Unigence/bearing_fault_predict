@@ -189,9 +189,11 @@ class OptimizerFactory:
         return info
 
 
-def create_optimizer(model: nn.Module, config: Dict[str, Any]) -> Optimizer:
+def create_optimizer_from_config(model: nn.Module, config: Dict[str, Any]) -> Optimizer:
     """
     便捷函数：从配置字典创建优化器
+
+    ⚠️ 注意：这是修复后的函数名，与launcher中的导入一致
 
     Args:
         model: 模型
@@ -216,6 +218,16 @@ def create_optimizer(model: nn.Module, config: Dict[str, Any]) -> Optimizer:
         optimizer_name=optimizer_name,
         **optimizer_config
     )
+
+
+# 保留旧的函数名以保持向后兼容
+def create_optimizer(model: nn.Module, config: Dict[str, Any]) -> Optimizer:
+    """
+    便捷函数：从配置字典创建优化器（向后兼容）
+
+    建议使用 create_optimizer_from_config
+    """
+    return create_optimizer_from_config(model, config)
 
 
 if __name__ == '__main__':
@@ -250,7 +262,16 @@ if __name__ == '__main__':
     )
     print("\nSGD Optimizer:", optimizer_sgd)
 
-    # 测试3: 使用参数组
+    # 测试3: 使用配置字典创建
+    config = {
+        'name': 'adamw',
+        'learning_rate': 5e-4,
+        'weight_decay': 1e-4
+    }
+    optimizer_from_config = create_optimizer_from_config(model, config)
+    print("\nOptimizer from config:", optimizer_from_config)
+
+    # 测试4: 使用参数组
     param_groups = [
         {'params': model[0].parameters(), 'lr': 1e-4},
         {'params': model[2].parameters(), 'lr': 1e-3}
@@ -261,3 +282,5 @@ if __name__ == '__main__':
     )
     print("\nOptimizer with param groups:", optimizer_groups)
     print("Info:", OptimizerFactory.get_optimizer_info(optimizer_groups))
+
+    print("\n✓ All tests passed!")

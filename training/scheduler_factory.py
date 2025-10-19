@@ -314,20 +314,24 @@ class SchedulerFactory:
         return info
 
 
-def create_scheduler(
+def create_scheduler_from_config(
     optimizer: optim.Optimizer,
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    total_epochs: Optional[int] = None
 ) -> _LRScheduler:
     """
     便捷函数：从配置字典创建调度器
-    
+
+    ⚠️ 注意：这是修复后的函数名，与launcher中的导入一致
+
     Args:
         optimizer: 优化器
         config: 配置字典
-        
+        total_epochs: 总训练轮数（某些调度器需要，如cosine）
+
     Returns:
         scheduler: 调度器实例
-        
+
     Example:
         config = {
             'name': 'cosine',
@@ -337,7 +341,14 @@ def create_scheduler(
     """
     scheduler_name = config.get('name', 'step')
     scheduler_config = {k: v for k, v in config.items() if k != 'name'}
-    
+
+    # 如果提供了total_epochs且配置中需要T_max，自动设置
+    if total_epochs is not None:
+        if scheduler_name == 'cosine' and 'T_max' not in scheduler_config:
+            scheduler_config['T_max'] = total_epochs
+        elif scheduler_name == 'onecycle' and 'epochs' not in scheduler_config:
+            scheduler_config['epochs'] = total_epochs
+
     return SchedulerFactory.create_scheduler(
         optimizer=optimizer,
         scheduler_name=scheduler_name,
@@ -345,16 +356,29 @@ def create_scheduler(
     )
 
 
+# 保留旧的函数名以保持向后兼容
+def create_scheduler(
+    optimizer: optim.Optimizer,
+    config: Dict[str, Any]
+) -> _LRScheduler:
+    """
+    便捷函数：从配置字典创建调度器（向后兼容）
+
+    建议使用 create_scheduler_from_config
+    """
+    return create_scheduler_from_config(optimizer, config)
+
+
 if __name__ == '__main__':
     # 测试代码
     import torch
     import torch.nn as nn
     from optimizer_factory import OptimizerFactory
-    
+
     # 创建简单模型和优化器
     model = nn.Linear(10, 5)
     optimizer = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
-    
+
     # 测试1: StepLR
     scheduler = SchedulerFactory.create_scheduler(
         optimizer,
@@ -364,40 +388,57 @@ if __name__ == '__main__':
     )
     print("StepLR Scheduler:", scheduler)
     print("Info:", SchedulerFactory.get_scheduler_info(scheduler))
-    
+
     # 测试2: CosineAnnealingLR
+    optimizer2 = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
     scheduler_cosine = SchedulerFactory.create_scheduler(
-        optimizer,
+        optimizer2,
         scheduler_name='cosine',
         T_max=50,
         eta_min=1e-6
     )
     print("\nCosineAnnealingLR:", scheduler_cosine)
-    
-    # 测试3: 带预热的余弦退火
-    optimizer2 = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
+
+    # 测试3: 从配置字典创建
+    optimizer3 = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
+    config = {
+        'name': 'cosine',
+        'eta_min': 1e-6
+    }
+    scheduler_from_config = create_scheduler_from_config(
+        optimizer3,
+        config,
+        total_epochs=100
+    )
+    print("\nScheduler from config:", scheduler_from_config)
+    print("Info:", SchedulerFactory.get_scheduler_info(scheduler_from_config))
+
+    # 测试4: 带预热的余弦退火
+    optimizer4 = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
     scheduler_warmup = SchedulerFactory.create_cosine_with_warmup(
-        optimizer2,
+        optimizer4,
         warmup_epochs=5,
         max_epochs=100,
         eta_min=1e-6
     )
     print("\nCosine with Warmup:", scheduler_warmup)
-    
+
     # 模拟训练过程
     print("\n模拟训练过程（前10个epoch）：")
     for epoch in range(10):
         scheduler_warmup.step()
-        lr = optimizer2.param_groups[0]['lr']
+        lr = optimizer4.param_groups[0]['lr']
         print(f"Epoch {epoch}: lr = {lr:.6f}")
-    
-    # 测试4: ReduceLROnPlateau
-    optimizer3 = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
+
+    # 测试5: ReduceLROnPlateau
+    optimizer5 = OptimizerFactory.create_optimizer(model, 'adam', learning_rate=1e-3)
     scheduler_plateau = SchedulerFactory.create_scheduler(
-        optimizer3,
+        optimizer5,
         scheduler_name='plateau',
         mode='min',
         factor=0.5,
         patience=5
     )
     print("\nReduceLROnPlateau:", scheduler_plateau)
+
+    print("\n✓ All tests passed!")
