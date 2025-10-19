@@ -96,8 +96,7 @@ bearing-fault-diagnosis/
 │   ├── metrics.py                    # 评估指标
 │   ├── visualization.py              # 可视化工具
 │   ├── checkpoint.py                 # 模型保存/加载
-│   ├── seed.py                       # 随机种子设置
-│   └── config_parser.py              # 配置文件解析
+│   └── seed.py                       # 随机种子设置
 │
 ├── evaluation/                       # 评估模块
 │   ├── __init__.py
