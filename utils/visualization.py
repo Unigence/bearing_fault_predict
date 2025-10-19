@@ -79,35 +79,14 @@ class TrainingVisualizer:
             ax.plot(epochs, values, marker='o', linewidth=2, markersize=4)
             ax.set_xlabel('Epoch', fontsize=10)
             ax.set_ylabel(metric.replace('_', ' ').title(), fontsize=10)
-            ax.set_title(f'{metric.replace("_", " ").title()}', fontsize=12, fontweight='bold')
+            ax.set_title(f'{metric.replace("_", " ").title()}', fontsize=11, fontweight='bold')
             ax.grid(True, alpha=0.3)
-            
-            # 标注最佳值
-            if 'loss' in metric.lower():
-                best_idx = np.argmin(values)
-                best_val = values[best_idx]
-                label = 'Min'
-            else:
-                best_idx = np.argmax(values)
-                best_val = values[best_idx]
-                label = 'Max'
-            
-            ax.scatter(best_idx + 1, best_val, color='red', s=100, zorder=5)
-            ax.annotate(
-                f'{label}: {best_val:.4f}',
-                xy=(best_idx + 1, best_val),
-                xytext=(10, 10),
-                textcoords='offset points',
-                fontsize=9,
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.7),
-                arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0')
-            )
         
         # 隐藏多余的子图
-        for idx in range(n_metrics, len(axes)):
+        for idx in range(len(metrics), len(axes)):
             axes[idx].axis('off')
         
-        plt.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
+        plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         
         # 保存图表
@@ -123,32 +102,31 @@ class TrainingVisualizer:
     
     def plot_loss_curves(
         self,
-        train_losses: List[float],
-        val_losses: Optional[List[float]] = None,
-        title: str = 'Loss Curves',
+        train_loss: List[float],
+        val_loss: List[float],
+        title: str = 'Training and Validation Loss',
         figsize: Tuple[int, int] = (10, 6),
         save_name: Optional[str] = None,
+        save_path: Optional[str] = None,
         show: bool = True
     ):
         """
-        绘制损失曲线
+        绘制训练和验证损失曲线
         
         Args:
-            train_losses: 训练损失列表
-            val_losses: 验证损失列表
+            train_loss: 训练损失列表
+            val_loss: 验证损失列表
             title: 图表标题
             figsize: 图表大小
-            save_name: 保存文件名
+            save_name: 保存文件名（优先使用save_path）
+            save_path: 完整保存路径
             show: 是否显示图表
         """
+        epochs = range(1, len(train_loss) + 1)
+        
         plt.figure(figsize=figsize)
-        
-        epochs = range(1, len(train_losses) + 1)
-        
-        plt.plot(epochs, train_losses, 'b-o', label='Train Loss', linewidth=2, markersize=4)
-        
-        if val_losses is not None:
-            plt.plot(epochs, val_losses, 'r-s', label='Val Loss', linewidth=2, markersize=4)
+        plt.plot(epochs, train_loss, 'b-o', label='Train Loss', linewidth=2, markersize=4)
+        plt.plot(epochs, val_loss, 'r-s', label='Val Loss', linewidth=2, markersize=4)
         
         plt.xlabel('Epoch', fontsize=12)
         plt.ylabel('Loss', fontsize=12)
@@ -156,8 +134,13 @@ class TrainingVisualizer:
         plt.legend(fontsize=11)
         plt.grid(True, alpha=0.3)
         
+        plt.tight_layout()
+        
         # 保存图表
-        if save_name:
+        if save_path:
+            plt.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
+            print(f"Plot saved: {save_path}")
+        elif save_name:
             filepath = self.save_dir / save_name
             plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
             print(f"Plot saved: {filepath}")
@@ -169,32 +152,31 @@ class TrainingVisualizer:
     
     def plot_accuracy_curves(
         self,
-        train_accs: List[float],
-        val_accs: Optional[List[float]] = None,
-        title: str = 'Accuracy Curves',
+        train_acc: List[float],
+        val_acc: List[float],
+        title: str = 'Training and Validation Accuracy',
         figsize: Tuple[int, int] = (10, 6),
         save_name: Optional[str] = None,
+        save_path: Optional[str] = None,
         show: bool = True
     ):
         """
-        绘制准确率曲线
+        绘制训练和验证准确率曲线
         
         Args:
-            train_accs: 训练准确率列表
-            val_accs: 验证准确率列表
+            train_acc: 训练准确率列表
+            val_acc: 验证准确率列表
             title: 图表标题
             figsize: 图表大小
-            save_name: 保存文件名
+            save_name: 保存文件名（优先使用save_path）
+            save_path: 完整保存路径
             show: 是否显示图表
         """
+        epochs = range(1, len(train_acc) + 1)
+        
         plt.figure(figsize=figsize)
-        
-        epochs = range(1, len(train_accs) + 1)
-        
-        plt.plot(epochs, train_accs, 'b-o', label='Train Accuracy', linewidth=2, markersize=4)
-        
-        if val_accs is not None:
-            plt.plot(epochs, val_accs, 'r-s', label='Val Accuracy', linewidth=2, markersize=4)
+        plt.plot(epochs, train_acc, 'b-o', label='Train Accuracy', linewidth=2, markersize=4)
+        plt.plot(epochs, val_acc, 'r-s', label='Val Accuracy', linewidth=2, markersize=4)
         
         plt.xlabel('Epoch', fontsize=12)
         plt.ylabel('Accuracy', fontsize=12)
@@ -203,8 +185,13 @@ class TrainingVisualizer:
         plt.grid(True, alpha=0.3)
         plt.ylim([0, 1])
         
+        plt.tight_layout()
+        
         # 保存图表
-        if save_name:
+        if save_path:
+            plt.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
+            print(f"Plot saved: {save_path}")
+        elif save_name:
             filepath = self.save_dir / save_name
             plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight')
             print(f"Plot saved: {filepath}")
@@ -232,16 +219,18 @@ class TrainingVisualizer:
             save_name: 保存文件名
             show: 是否显示图表
         """
-        plt.figure(figsize=figsize)
-        
         epochs = range(1, len(learning_rates) + 1)
         
+        plt.figure(figsize=figsize)
         plt.plot(epochs, learning_rates, 'g-o', linewidth=2, markersize=4)
+        
         plt.xlabel('Epoch', fontsize=12)
         plt.ylabel('Learning Rate', fontsize=12)
         plt.title(title, fontsize=14, fontweight='bold')
         plt.grid(True, alpha=0.3)
-        plt.yscale('log')
+        plt.yscale('log')  # 使用对数刻度
+        
+        plt.tight_layout()
         
         # 保存图表
         if save_name:
@@ -258,53 +247,51 @@ class TrainingVisualizer:
         self,
         cm: np.ndarray,
         class_names: Optional[List[str]] = None,
-        normalize: bool = False,
         title: str = 'Confusion Matrix',
-        cmap: str = 'Blues',
         figsize: Tuple[int, int] = (10, 8),
+        normalize: bool = False,
         save_name: Optional[str] = None,
         show: bool = True
     ):
         """
-        绘制混淆矩阵
+        绘制混淆矩阵热力图
         
         Args:
             cm: 混淆矩阵
             class_names: 类别名称列表
-            normalize: 是否归一化
             title: 图表标题
-            cmap: 颜色映射
             figsize: 图表大小
+            normalize: 是否归一化
             save_name: 保存文件名
             show: 是否显示图表
         """
         if normalize:
             cm = cm.astype('float') / cm.sum(axis=1, keepdims=True)
+            fmt = '.2f'
+        else:
+            fmt = 'd'
         
         num_classes = cm.shape[0]
         
         if class_names is None:
-            class_names = [f'C{i}' for i in range(num_classes)]
+            class_names = [f'Class {i}' for i in range(num_classes)]
         
         plt.figure(figsize=figsize)
         
-        # 绘制热力图
         sns.heatmap(
             cm,
             annot=True,
-            fmt='.2f' if normalize else 'd',
-            cmap=cmap,
-            square=True,
+            fmt=fmt,
+            cmap='Blues',
             xticklabels=class_names,
             yticklabels=class_names,
-            cbar_kws={'label': 'Proportion' if normalize else 'Count'},
-            linewidths=0.5,
-            linecolor='gray'
+            cbar_kws={'label': 'Count' if not normalize else 'Proportion'}
         )
         
         plt.xlabel('Predicted Label', fontsize=12)
         plt.ylabel('True Label', fontsize=12)
         plt.title(title, fontsize=14, fontweight='bold')
+        
         plt.tight_layout()
         
         # 保存图表
@@ -601,3 +588,4 @@ if __name__ == '__main__':
     )
     
     print("\n✓ All plots saved to ./test_plots/")
+    print("=" * 60)
