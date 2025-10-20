@@ -1,177 +1,86 @@
+# ====================================================================================
 # 数据增强配置文件
-# Data Augmentation Configuration
+# ====================================================================================
+#
+# 📝 Mixup说明:
+# - Mixup仅在有监督训练(supervised)阶段使用
+# - 对比学习(contrastive)阶段不使用Mixup
+# - Mixup可以在不同层级应用:时域、频域、特征层
+# ====================================================================================
 
 # ====================================================================================
-# 渐进式增强策略
+# 对比学习增强 (Contrastive Learning Augmentation)
 # ====================================================================================
-progressive:
-  # 是否启用渐进式增强
-  enable: true
-  
-  # 增强强度随epoch变化:
-  # epoch < 30% max_epochs: weak
-  # epoch 30%-70% max_epochs: medium  
-  # epoch > 70% max_epochs: strong
-  
-  # 或者使用恒定增强(设置为false时使用下面的default_intensity)
-  use_constant: false
-  # 恒定增强强度: 'weak', 'medium', 'strong'
-  default_intensity: 'medium'
-
-# ====================================================================================
-# 对比学习增强(预训练使用)
-# ====================================================================================
+# 对比学习需要生成两个不同的增强视图
+# 注意: 对比学习阶段不使用Mixup
 contrastive:
-  # 强增强概率(第一个增强版本)
-  strong_aug_prob: 0.5
-  
-  # 强增强参数
-  strong:
-    gaussian_noise:
-      sigma_range: [0.03, 0.05]
-      prob: 0.8
-    
-    time_shift:
-      shift_range: [-50, 50]  # 采样点
-      prob: 0.6
-    
-    amplitude_scale:
-      scale_range: [0.7, 1.3]
-      prob: 0.7
-    
-    time_warping:
-      warp_range: [0.85, 1.15]
-      prob: 0.5
-    
-    random_masking:
-      mask_ratio: 0.15
-      prob: 0.5
-    
-    add_impulse:
-      num_impulses: [1, 3]
-      prob: 0.4
-  
-  # 弱增强参数
-  weak:
-    gaussian_noise:
-      sigma_range: [0.01, 0.02]
-      prob: 0.5
-    
-    time_shift:
-      shift_range: [-20, 20]
-      prob: 0.3
-    
-    amplitude_scale:
-      scale_range: [0.9, 1.1]
-      prob: 0.4
-
-# ====================================================================================
-# 有监督训练增强
-# ====================================================================================
-supervised:
   # 弱增强
   weak:
     time_domain:
       gaussian_noise:
         sigma_range: [0.01, 0.02]
-        prob: 0.4
-      
+        prob: 0.3
+
       time_shift:
         shift_range: [-20, 20]
         prob: 0.3
-      
+
       amplitude_scale:
         scale_range: [0.95, 1.05]
         prob: 0.3
-    
+
     frequency_domain:
-      # 频域增强应用概率
       apply_prob: 0.2
-      
+
       frequency_masking:
-        num_masks: [1, 2]
-        mask_param: 10
-        prob: 0.5
-  
-  # 中等增强
-  medium:
-    time_domain:
-      gaussian_noise:
-        sigma_range: [0.02, 0.03]
-        prob: 0.6
-      
-      time_shift:
-        shift_range: [-30, 30]
-        prob: 0.5
-      
-      amplitude_scale:
-        scale_range: [0.85, 1.15]
-        prob: 0.5
-      
-      time_warping:
-        warp_range: [0.9, 1.1]
+        mask_param: [5, 10]
+        num_masks: [1, 2]  # 🔧 修复: (1,1) -> (1,2)
         prob: 0.3
-      
-      random_masking:
-        mask_ratio: 0.1
-        prob: 0.3
-    
-    frequency_domain:
-      apply_prob: 0.3
-      
-      frequency_masking:
-        num_masks: [1, 3]
-        mask_param: 15
-        prob: 0.6
-      
-      frequency_shift:
-        shift_range: [-5, 5]
-        prob: 0.3
-  
+
   # 强增强
   strong:
     time_domain:
       gaussian_noise:
         sigma_range: [0.03, 0.05]
         prob: 0.7
-      
+
       time_shift:
         shift_range: [-50, 50]
         prob: 0.6
-      
+
       amplitude_scale:
         scale_range: [0.7, 1.3]
         prob: 0.6
-      
+
       time_warping:
         warp_range: [0.85, 1.15]
         prob: 0.5
-      
+
       random_masking:
         mask_ratio: 0.15
         prob: 0.5
-      
+
       add_impulse:
         num_impulses: [1, 3]
         prob: 0.4
-      
+
       amplitude_modulation:
         mod_depth: 0.3
         mod_freq_range: [0.1, 0.5]
         prob: 0.3
-    
+
     frequency_domain:
       apply_prob: 0.4
-      
+
       frequency_masking:
-        num_masks: [2, 4]
-        mask_param: 20
+        mask_param: [5, 20]
+        num_masks: [2, 4]  # 🔧 修复: (2,4) 确保max>min
         prob: 0.7
-      
+
       frequency_shift:
         shift_range: [-10, 10]
         prob: 0.4
-      
+
       specaugment:
         freq_mask_param: [5, 20]
         time_mask_param: [5, 15]
@@ -180,33 +89,187 @@ supervised:
         prob: 0.5
 
 # ====================================================================================
-# 验证集/测试集(不增强)
+# 有监督训练增强 (Supervised Training Augmentation)
+# ====================================================================================
+supervised:
+  # 弱增强
+  weak:
+    time_domain:
+      gaussian_noise:
+        sigma_range: [0.01, 0.02]
+        prob: 0.4
+
+      time_shift:
+        shift_range: [-20, 20]
+        prob: 0.3
+
+      amplitude_scale:
+        scale_range: [0.95, 1.05]
+        prob: 0.3
+
+    frequency_domain:
+      apply_prob: 0.2
+
+      frequency_masking:
+        mask_param: [5, 10]
+        num_masks: [1, 2]  # 🔧 修复: (1,1) -> (1,2)
+        prob: 0.5
+
+  # 中等增强
+  medium:
+    time_domain:
+      gaussian_noise:
+        sigma_range: [0.02, 0.03]
+        prob: 0.6
+
+      time_shift:
+        shift_range: [-30, 30]
+        prob: 0.5
+
+      amplitude_scale:
+        scale_range: [0.85, 1.15]
+        prob: 0.5
+
+      time_warping:
+        warp_range: [0.9, 1.1]
+        prob: 0.3
+
+      random_masking:
+        mask_ratio: 0.1
+        prob: 0.3
+
+    frequency_domain:
+      apply_prob: 0.3
+
+      frequency_masking:
+        mask_param: [5, 15]
+        num_masks: [1, 3]
+        prob: 0.6
+
+      frequency_shift:
+        shift_range: [-5, 5]
+        prob: 0.3
+
+  # 强增强
+  strong:
+    time_domain:
+      gaussian_noise:
+        sigma_range: [0.03, 0.05]
+        prob: 0.7
+
+      time_shift:
+        shift_range: [-50, 50]
+        prob: 0.6
+
+      amplitude_scale:
+        scale_range: [0.7, 1.3]
+        prob: 0.6
+
+      time_warping:
+        warp_range: [0.85, 1.15]
+        prob: 0.5
+
+      random_masking:
+        mask_ratio: 0.15
+        prob: 0.5
+
+      add_impulse:
+        num_impulses: [1, 3]
+        prob: 0.4
+
+    frequency_domain:
+      apply_prob: 0.4
+
+      frequency_masking:
+        mask_param: [5, 20]
+        num_masks: [2, 4]
+        prob: 0.7
+
+      magnitude_masking:
+        attenuation: [0.3, 0.7]
+        prob: 0.5
+
+      frequency_shift:
+        shift_range: [-10, 10]
+        prob: 0.4
+
+# ====================================================================================
+# 验证集/测试集 (无增强)
 # ====================================================================================
 validation:
   # 验证集不应用任何增强
   apply_augmentation: false
 
 # ====================================================================================
-# Mixup配置(在train_config.yaml中也有,这里是详细参数)
+# Mixup配置 (统一管理)
 # ====================================================================================
+# 📝 说明:
+# - Mixup仅在有监督训练(supervised)阶段使用
+# - 对比学习(contrastive)阶段不使用Mixup
+# - 可以在三个层级应用Mixup:
+#   1. 时域: 在原始信号上混合
+#   2. 频域: 在频谱上混合 (实验性)
+#   3. 特征层: 在网络中间特征上混合 (实验性)
+# - 推荐: 只启用时域Mixup即可,其他两种为高级用法
 mixup:
   # 时域Mixup
   time_domain:
-    enable: true
-    alpha: 0.1
-    prob: 0.5
-  
-  # 频域Mixup
+    enable: false         # 是否启用
+    alpha: 0.2            # Beta分布参数,控制混合比例
+    prob: 0.5             # 应用概率
+
+  # 频域Mixup (实验性,默认不启用)
   frequency_domain:
-    enable: false  # 暂不启用
-    alpha: 0.1
-    prob: 0.3
-    mix_mode: 'magnitude'   # magnitude - 仅混合幅度谱；low_freq - 仅混合低频部分
-  
-  # 特征层Mixup(暂不启用)
+    enable: false         # 是否启用
+    alpha: 0.1            # Beta分布参数
+    prob: 0.3             # 应用概率
+    mix_mode: 'magnitude' # 'magnitude' - 仅混合幅度谱; 'low_freq' - 仅混合低频部分
+
+  # 特征层Mixup (实验性,默认不启用)
   feature_level:
-    enable: false
-    alpha: 0.1
-    prob: 0.3
-    # 在哪一层应用: 'fusion_output', 'classifier_input'
-    apply_at: 'fusion_output'
+    enable: false                  # 是否启用
+    alpha: 0.1                     # Beta分布参数
+    prob: 0.3                      # 应用概率
+    apply_at: 'fusion_output'      # 在哪一层应用: 'fusion_output', 'classifier_input'
+
+# ====================================================================================
+# 渐进式增强 (Progressive Augmentation)
+# ====================================================================================
+# 在训练过程中逐渐增强数据增强强度
+progressive:
+  enable: false        # 是否启用渐进式增强
+
+  # 增强强度变化策略
+  schedule:
+    # 前30%: 弱增强
+    # 30%-70%: 中等增强
+    # 70%-100%: 强增强
+    weak_ratio: 0.3
+    medium_ratio: 0.7
+
+# ====================================================================================
+# 配置验证和使用说明
+# ====================================================================================
+#
+# ✅ 使用建议:
+# 1. 对比学习阶段:
+#    - 使用 contrastive 配置
+#    - 不使用 Mixup
+#    - 生成两个不同的增强视图
+#
+# 2. 有监督训练阶段:
+#    - 使用 supervised 配置
+#    - 可以启用 Mixup (推荐只启用时域Mixup)
+#    - 可以选择启用渐进式增强
+#
+# 3. 验证/测试阶段:
+#    - 使用 validation 配置
+#    - 不应用任何增强
+#
+# ⚠️  注意事项:
+# 1. num_masks参数必须满足 min < max 或 min == max
+# 2. Mixup仅在有监督训练中使用,对比学习不使用
+# 3. 频域和特征层Mixup为实验性功能,谨慎使用
+# 4. 渐进式增强会自动调整增强强度,无需手动调整
+#
+# ====================================================================================
