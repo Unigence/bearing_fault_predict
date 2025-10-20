@@ -164,7 +164,7 @@ class MultimodalBearingDiagnosisModel(nn.Module):
         if fusion_type == 'hierarchical':
             self.fusion = HierarchicalFusion(
                 modal_dim=modal_dim,
-                fusion_output_dim=fusion_output_dim,
+                output_dim=fusion_output_dim,
                 num_heads=fusion_num_heads,
                 dropout_l1=fusion_dropout_l1,
                 dropout_l2=fusion_dropout_l2,
@@ -173,7 +173,7 @@ class MultimodalBearingDiagnosisModel(nn.Module):
         elif fusion_type == 'hierarchical_v2':
             self.fusion = HierarchicalFusionV2(
                 modal_dim=modal_dim,
-                fusion_output_dim=fusion_output_dim,
+                output_dim=fusion_output_dim,
                 num_heads=fusion_num_heads
             )
         else:
