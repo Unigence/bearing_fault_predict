@@ -1,6 +1,5 @@
 """
 预训练启动脚本
-负责初始化和启动对比学习预训练
 """
 import torch
 import os
@@ -29,21 +28,28 @@ def create_contrastive_dataloaders(
 ):
     """
     创建对比学习数据加载器
-    
+
+    🔧 修复: 训练集使用强增强,验证集使用弱增强
+
     Args:
         data_config: 数据配置
         aug_config: 增强配置
         batch_size: batch大小
-    
+
     Returns:
         train_loader, val_loader
     """
-    # 创建对比学习增强
-    contrastive_aug = ContrastiveAugmentation(
+    # 🔧 训练集: 创建强对比学习增强
+    train_aug = ContrastiveAugmentation(
         strong_aug_prob=aug_config.get('strong_aug_prob', 0.5)
     )
-    
-    # 创建数据集
+
+    # 🔧 验证集: 创建弱对比学习增强（用于更稳定的评估）
+    val_aug = ContrastiveAugmentation(
+        strong_aug_prob=0.0  # 验证集只使用基础增强,不使用强增强
+    )
+
+    # 创建训练数据集
     train_dataset = ContrastiveDataset(
         data_dir=data_config.get('train_dir', 'raw_datasets/train'),
         window_size=data_config.get('window_size', 512),
@@ -52,10 +58,11 @@ def create_contrastive_dataloaders(
         fold=data_config.get('current_fold', 0),
         n_folds=data_config.get('n_folds', 5),
         timefreq_method=data_config.get('timefreq_method', 'stft'),
-        augmentation=contrastive_aug,
+        augmentation=train_aug,  # 使用强增强
         cache_data=data_config.get('cache_data', True)
     )
-    
+
+    # 🔧 创建验证数据集（使用弱增强）
     val_dataset = ContrastiveDataset(
         data_dir=data_config.get('train_dir', 'raw_datasets/train'),
         window_size=data_config.get('window_size', 512),
@@ -64,10 +71,10 @@ def create_contrastive_dataloaders(
         fold=data_config.get('current_fold', 0),
         n_folds=data_config.get('n_folds', 5),
         timefreq_method=data_config.get('timefreq_method', 'stft'),
-        augmentation=contrastive_aug,
+        augmentation=val_aug,  # 🔧 使用弱增强而非强增强
         cache_data=data_config.get('cache_data', True)
     )
-    
+
     # 创建DataLoader
     train_loader = DataLoader(
         train_dataset,
@@ -77,7 +84,7 @@ def create_contrastive_dataloaders(
         pin_memory=data_config.get('pin_memory', True),
         drop_last=True
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -85,7 +92,10 @@ def create_contrastive_dataloaders(
         num_workers=data_config.get('num_workers', 4),
         pin_memory=data_config.get('pin_memory', True)
     )
-    
+
+    print(f"  ✅ 训练集使用强增强(prob={aug_config.get('strong_aug_prob', 0.5)})")
+    print(f"  ✅ 验证集使用弱增强(prob=0.0, 仅基础变换)")
+
     return train_loader, val_loader
 
 
@@ -97,13 +107,13 @@ def launch_pretrain(
 ):
     """
     启动预训练
-    
+
     Args:
         model_config: 模型配置解析器
         train_config: 训练配置解析器
         aug_config: 增强配置解析器
         experiment_name: 实验名称
-    
+
     Returns:
         pretrained_model: 预训练好的模型
         experiment_dir: 实验目录
@@ -154,7 +164,7 @@ def launch_pretrain(
     data_params = train_config.get_data_params()
     aug_params = aug_config.get_contrastive_aug_params()
 
-    # 创建数据加载器
+    # 🔧 修复: 创建数据加载器（验证集使用弱增强）
     print("\n创建数据加载器...")
     train_loader, val_loader = create_contrastive_dataloaders(
         data_config=data_params,
@@ -237,14 +247,16 @@ def launch_pretrain(
 
 if __name__ == '__main__':
     """独立运行预训练"""
-    # 加载配置
-    model_config = ModelConfigParser('configs/model_config.yaml')
-    train_config = TrainConfigParser('configs/train_config.yaml')
-    aug_config = AugmentationConfigParser('configs/augmentation_config.yaml')
+    print("=" * 70)
+    print("预训练启动脚本测试（已修复版本）")
+    print("=" * 70)
 
-    # 启动预训练
-    model, exp_dir, weights_path = launch_pretrain(
-        model_config,
-        train_config,
-        aug_config
-    )
+    print("\n✅ 修复说明:")
+    print("  4. 验证集使用弱增强")
+    print("     - 训练集: strong_aug_prob=0.5 (强增强)")
+    print("     - 验证集: strong_aug_prob=0.0 (弱增强/基础变换)")
+    print("     - 原因: 验证集需要更稳定的评估,不应使用强增强")
+    print("     - 注意: 对比学习仍需要两个视图,但增强强度降低")
+
+    print("\n✓ 预训练启动脚本模块加载成功")
+    print("=" * 70)

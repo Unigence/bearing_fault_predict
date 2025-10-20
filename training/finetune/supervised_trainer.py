@@ -1,6 +1,5 @@
 """
 有监督训练器
-用于微调阶段的有监督学习
 """
 import torch
 import torch.nn as nn
@@ -72,6 +71,7 @@ class SupervisedTrainer(TrainerBase):
             print(f"  - 时域Mixup: {self.mixup_manager.time_domain_enabled}")
             print(f"  - 频域Mixup: {self.mixup_manager.frequency_domain_enabled}")
             print(f"  - 特征层Mixup: {self.mixup_manager.feature_level_enabled}")
+            print(f"  ⚠️  注意: 使用输入层Mixup时将禁用ArcFace损失(仅使用Softmax)")
         else:
             print(f"  - Mixup: 未启用")
         print(f"  - 梯度裁剪: {gradient_clip_max_norm}")
@@ -132,41 +132,40 @@ class SupervisedTrainer(TrainerBase):
                 lam = 1.0
                 use_mixup = False
 
-            # 前向传播 - 使用'supervised'模式
+            # 🔧 修复1: 前向传播 - 根据是否使用Mixup决定计算方式
             if self.use_amp:
                 with torch.cuda.amp.autocast():
                     softmax_logits, arcface_logits, features = self.model(
                         mixed_batch, mode='supervised'
                     )
 
-                    # 计算损失
+                    # 🔧 关键修复: Mixup时只使用Softmax损失,不使用ArcFace
                     if use_mixup:
-                        # Mixup损失：对两个标签分别计算损失再加权
-                        loss_a, _ = self.criterion(softmax_logits, arcface_logits, labels_a)
-                        loss_b, _ = self.criterion(softmax_logits, arcface_logits, labels_b)
+                        # Mixup情况: 只用Softmax分类损失
+                        # 原因: Mixup后的特征不在任何类的流形上,无法计算有意义的角度边界
+                        loss_a = F.cross_entropy(softmax_logits, labels_a, reduction='mean')
+                        loss_b = F.cross_entropy(softmax_logits, labels_b, reduction='mean')
                         loss = lam * loss_a + (1 - lam) * loss_b
                     else:
-                        # 正常损失
-                        loss, _ = self.criterion(softmax_logits, arcface_logits, labels_a)
+                        # 正常情况: 使用完整的组合损失(Focal + ArcFace)
+                        loss, loss_dict = self.criterion(softmax_logits, arcface_logits, labels_a)
             else:
                 softmax_logits, arcface_logits, features = self.model(
                     mixed_batch, mode='supervised'
                 )
 
-                # 计算损失
                 if use_mixup:
-                    loss_a, _ = self.criterion(softmax_logits, arcface_logits, labels_a)
-                    loss_b, _ = self.criterion(softmax_logits, arcface_logits, labels_b)
+                    loss_a = F.cross_entropy(softmax_logits, labels_a, reduction='mean')
+                    loss_b = F.cross_entropy(softmax_logits, labels_b, reduction='mean')
                     loss = lam * loss_a + (1 - lam) * loss_b
                 else:
-                    loss, _ = self.criterion(softmax_logits, arcface_logits, labels_a)
+                    loss, loss_dict = self.criterion(softmax_logits, arcface_logits, labels_a)
 
             # 反向传播
             self.optimizer.zero_grad()
 
             if self.use_amp:
                 self.scaler.scale(loss).backward()
-
                 # 梯度裁剪
                 if self.gradient_clip_max_norm > 0:
                     self.scaler.unscale_(self.optimizer)
@@ -174,27 +173,27 @@ class SupervisedTrainer(TrainerBase):
                         self.model.parameters(),
                         self.gradient_clip_max_norm
                     )
-
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
-
-                # 梯度裁剪
                 if self.gradient_clip_max_norm > 0:
                     torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
                         self.gradient_clip_max_norm
                     )
-
                 self.optimizer.step()
 
-            # 统计准确率（注意：mixup时准确率计算不准确）
+            # 统计准确率
             with torch.no_grad():
                 predictions = torch.argmax(softmax_logits, dim=1)
+
                 if use_mixup:
-                    # Mixup时，与labels_a比较（近似）
-                    correct = (predictions == labels_a).sum().item()
+                    # Mixup情况：使用硬标签计算准确率（取lambda较大的那个）
+                    if lam > 0.5:
+                        correct = (predictions == labels_a).sum().item()
+                    else:
+                        correct = (predictions == labels_b).sum().item()
                 else:
                     correct = (predictions == labels_a).sum().item()
 
@@ -208,7 +207,8 @@ class SupervisedTrainer(TrainerBase):
             # 更新进度条
             pbar.set_postfix({
                 'loss': loss.item(),
-                'acc': total_correct / total_samples
+                'acc': total_correct / total_samples,
+                'mixup': use_mixup
             })
 
         # 计算平均指标
@@ -224,6 +224,8 @@ class SupervisedTrainer(TrainerBase):
         """
         验证一个epoch
 
+        🔧 修复2: 验证时使用与训练相同的损失函数计算
+
         Returns:
             metrics: 验证指标字典 {'val_loss': ..., 'val_acc': ...}
         """
@@ -237,25 +239,26 @@ class SupervisedTrainer(TrainerBase):
 
         with torch.no_grad():
             for batch in pbar:
-                # 验证时不使用mixup
                 labels = batch['label'].to(self.device)
 
-                # 前向传播 - 使用'supervised'模式
+                # 🔧 关键修复: 验证时也使用双头输出和完整损失
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
-                        # 验证时模型自动使用eval模式，只返回logits
-                        logits = self.model(batch, mode='supervised')
+                        # 验证模式仍然返回双头输出
+                        softmax_logits, arcface_logits, features = self.model(
+                            batch, mode='supervised'
+                        )
 
-                        # 需要手动分离出softmax_logits和arcface_logits
-                        # 但验证时只返回logits，所以这里直接计算loss
-                        # 注意：这里需要根据实际模型返回值调整
-                        loss = F.cross_entropy(logits, labels)
+                        # 使用与训练相同的损失函数（但不使用Mixup）
+                        loss, loss_dict = self.criterion(softmax_logits, arcface_logits, labels)
                 else:
-                    logits = self.model(batch, mode='supervised')
-                    loss = F.cross_entropy(logits, labels)
+                    softmax_logits, arcface_logits, features = self.model(
+                        batch, mode='supervised'
+                    )
+                    loss, loss_dict = self.criterion(softmax_logits, arcface_logits, labels)
 
-                # 统计
-                predictions = torch.argmax(logits, dim=1)
+                # 统计准确率 - 使用softmax_logits
+                predictions = torch.argmax(softmax_logits, dim=1)
                 correct = (predictions == labels).sum().item()
 
                 total_correct += correct
@@ -328,7 +331,7 @@ class SupervisedTrainer(TrainerBase):
 if __name__ == '__main__':
     """测试代码"""
     print("=" * 70)
-    print("SupervisedTrainer测试")
+    print("SupervisedTrainer测试（已修复版本）")
     print("=" * 70)
 
     # 测试Mixup配置
@@ -355,6 +358,9 @@ if __name__ == '__main__':
     print(f"  - 时域: {mixup_config['time_domain']['enable']}")
     print(f"  - 频域: {mixup_config['frequency_domain']['enable']}")
     print(f"  - 特征层: {mixup_config['feature_level']['enable']}")
+    print("\n✅ 修复说明:")
+    print("  1. 使用输入层Mixup时,只使用Softmax损失")
+    print("  2. 验证时使用与训练相同的完整损失函数")
 
     print("\n✓ SupervisedTrainer模块加载成功")
     print("=" * 70)
