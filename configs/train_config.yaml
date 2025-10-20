@@ -8,7 +8,7 @@ training_mode:
   # 训练流程: 'pretrain_finetune' 或 'direct_train'
   # pretrain_finetune: 对比学习预训练 + 有监督微调
   # direct_train: 直接有监督训练(跳过预训练)
-  pipeline: 'pretrain_finetune'  # 'pretrain_finetune' | 'direct_train'
+  pipeline: 'direct_train'  # 'pretrain_finetune' | 'direct_train'
   
   # 是否启用mixup
   use_mixup: false
@@ -90,23 +90,28 @@ finetune:
 
   # 损失函数配置
   loss:
+    # 使用渐进式损失权重
+    use_progressive: false
+
     # Focal Loss
     focal:
       alpha: null  # 类别权重(null表示自动计算)
-      gamma: 2.0
       weight: 0.6
-
+      gamma_init: 2.0
+      gamma_min: 1.0
     # ArcFace Loss
     arcface:
       s: 30.0  # 特征缩放因子
       m: 0.5   # margin
-      weight: 0.3
-
+      weight_init: 0.3
+      weight_max: 0.7
     # Center Loss
     center:
       num_features: 768  # 融合后特征维度
       lambda_c: 0.1
       weight: 0.1
+    # label Smoothing
+    label_smoothing: 0.1
 
   # 早停
   early_stopping:

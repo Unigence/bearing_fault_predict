@@ -89,14 +89,19 @@ class SupervisedTrainer(TrainerBase):
         if loss_config.get('use_progressive', False):
             # 渐进式组合损失
             criterion = ProgressiveCombinedLoss(
-                focal_config=loss_config.get('focal', {}),
-                arcface_config=loss_config.get('arcface', {}),
+                focal_alpha=loss_config['focal'].get('alpha', None),
+                focal_gamma_init=loss_config['focal'].get('gamma_init', None),
+                focal_gamma_min=loss_config['focal'].get('gamma_min', None),
+                arcface_weight_init=loss_config['arcface'].get('weight_init', None),
+                arcface_weight_max=loss_config['arcface'].get('weight_max', None),
                 label_smoothing=loss_config.get('label_smoothing', 0.0)
             )
         else:
             # 固定权重组合损失
             criterion = CombinedLoss(
-                focal_config=loss_config.get('focal', {}),
+                focal_alpha=loss_config['focal'].get('alpha', None),
+                focal_gamma=loss_config['focal'].get('gamma_init', None),
+                focal_weight=loss_config['focal'].get('weight', None),
                 arcface_weight=loss_config['arcface'].get('weight_init', 0.5),
                 label_smoothing=loss_config.get('label_smoothing', 0.0)
             )
@@ -132,14 +137,14 @@ class SupervisedTrainer(TrainerBase):
                 lam = 1.0
                 use_mixup = False
 
-            # 🔧 修复1: 前向传播 - 根据是否使用Mixup决定计算方式
+            # 前向传播 - 根据是否使用Mixup决定计算方式
             if self.use_amp:
                 with torch.cuda.amp.autocast():
                     softmax_logits, arcface_logits, features = self.model(
                         mixed_batch, mode='supervised'
                     )
 
-                    # 🔧 关键修复: Mixup时只使用Softmax损失,不使用ArcFace
+                    #  Mixup时只使用Softmax损失,不使用ArcFace
                     if use_mixup:
                         # Mixup情况: 只用Softmax分类损失
                         # 原因: Mixup后的特征不在任何类的流形上,无法计算有意义的角度边界
