@@ -69,6 +69,32 @@ class ContrastiveTrainer(TrainerBase):
         print(f"  - 损失类型: {loss_type}")
         print(f"  - 温度参数: {temperature}")
 
+    def compute_loss(self, batch, **kwargs):
+        """
+        计算对比学习损失 (实现抽象方法)
+
+        Args:
+            batch: 批次数据，包含两个视图 (view1, view2)
+            **kwargs: 其他参数
+
+        Returns:
+            loss: 损失值
+            metrics: 指标字典 (可选)
+        """
+        view1, view2 = batch
+        view1 = view1.to(self.device)
+        view2 = view2.to(self.device)
+
+        # 获取两个视图的特征
+        z1 = self.model(view1, return_features=True)
+        z2 = self.model(view2, return_features=True)
+
+        # 计算对比损失
+        loss = self.criterion(z1, z2)
+
+        # 返回损失和空指标字典 (对比学习通常不需要其他指标)
+        return loss, {}
+
     def train_epoch(self, epoch: int, log_interval: int = 10) -> Dict[str, float]:
         """训练一个epoch"""
         self.model.train()
