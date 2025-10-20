@@ -11,7 +11,7 @@ from .time_domain_aug import (
 )
 from .frequency_aug import (
     FrequencyMasking, MagnitudeMasking, RandomFiltering,
-    PhaseShift, Compose as FreqCompose
+    PhaseShift, FreqCompose
 )
 
 
