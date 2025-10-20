@@ -35,6 +35,7 @@ class ContrastiveDataset(Dataset):
                  n_folds=5,
                  timefreq_method='stft',
                  use_labels=False,  # True: SupCon, False: NT-Xent
+                 augmentation=None,
                  cache_data=True):
         """
         Args:
@@ -81,7 +82,11 @@ class ContrastiveDataset(Dataset):
         self._create_transforms()
         
         # 创建对比学习增强
-        self.augmentation = ContrastiveAugmentation()
+        if augmentation is not None:
+            self.augmentation = augmentation
+        else:
+            from augmentation.augmentation_pipeline import ContrastiveAugmentation
+            self.augmentation = ContrastiveAugmentation()
         
         # 加载数据索引
         self.data_index = self._build_data_index()
