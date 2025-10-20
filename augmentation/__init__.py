@@ -25,11 +25,10 @@ from .frequency_aug import (
 )
 
 from .mixup import (
-    Mixup,
-    CutMix,
+    TimeDomainMixup,
+    FrequencyDomainMixup,
+    MultiModalMixup,
     ManifoldMixup,
-    MixupCollator,
-    get_mixup_fn,
 )
 
 from .augmentation_pipeline import (
@@ -61,11 +60,10 @@ __all__ = [
     'get_frequency_augmentation',
     
     # Mixup
-    'Mixup',
-    'CutMix',
-    'ManifoldMixup',
-    'MixupCollator',
-    'get_mixup_fn',
+    TimeDomainMixup,
+    FrequencyDomainMixup,
+    MultiModalMixup,
+    ManifoldMixup,
     
     # 增强管道
     'AugmentationPipeline',
