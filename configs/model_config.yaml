@@ -10,13 +10,11 @@ model:
   
   # 输入序列长度
   seq_len: 512
-  
   # 类别数量
   num_classes: 6
   
   # 融合类型: 'simple', 'adaptive', 'hierarchical'
   fusion_type: 'hierarchical'
-  
   # 分类头类型: 'softmax', 'arcface', 'dual'
   head_type: 'dual'
 
