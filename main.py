@@ -167,7 +167,7 @@ def main():
     # ============================================================
     if not skip_finetune:
         print("\n" + "=" * 80)
-        print("阶段2: 有监督微调")
+        print("阶段2: 有监督微调/直接训练")
         print("=" * 80)
         
         finetune_exp_name = f"{experiment_name}_finetune"
@@ -177,7 +177,7 @@ def main():
                 model_config=model_config,
                 train_config=train_config,
                 aug_config=aug_config,
-                pretrained_weights_path=pretrained_weights_path,
+                pretrained_weights=pretrained_weights_path,
                 experiment_name=finetune_exp_name
             )
             
