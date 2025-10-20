@@ -65,23 +65,34 @@ def create_supervised_dataloaders(
     train_dataset = BearingDataset(
         data_dir=data_config.get('train_dir', 'raw_datasets/train'),
         mode='train',
-        augmentation=train_augmentation
+        fold=data_config.get('current_fold', 0),
+        n_folds=data_config.get('n_folds', 5),
+        window_size=data_config.get('window_size', 512),
+        window_step=data_config.get('window_step', 256),
+        timefreq_method=data_config.get('timefreq_method', 'stft'),
+        augmentation=train_augmentation,
+        cache_data=data_config.get('cache_data', True)
     )
 
     val_dataset = BearingDataset(
-        data_dir=data_config.get('val_dir', 'raw_datasets/val'),
+        data_dir=data_config.get('train_dir', 'raw_datasets/train'),
         mode='val',
-        augmentation=None  # 验证集不增强
+        fold=data_config.get('current_fold', 0),
+        n_folds=data_config.get('n_folds', 5),
+        window_size=data_config.get('window_size', 512),
+        window_step=data_config.get('window_step', 256),
+        timefreq_method=data_config.get('timefreq_method', 'stft'),
+        augmentation=None,  # 验证集不增强
+        cache_data=data_config.get('cache_data', True)
     )
 
-    # 创建数据加载器
+    # 创建DataLoader
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=data_config.get('num_workers', 4),
-        pin_memory=True,
-        drop_last=True
+        pin_memory=data_config.get('pin_memory', True)
     )
 
     val_loader = DataLoader(
@@ -89,13 +100,8 @@ def create_supervised_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=data_config.get('num_workers', 4),
-        pin_memory=True
+        pin_memory=data_config.get('pin_memory', True)
     )
-
-    print(f"✓ 数据加载器创建成功")
-    print(f"  - 训练集: {len(train_dataset)} 样本")
-    print(f"  - 验证集: {len(val_dataset)} 样本")
-    print(f"  - Batch size: {batch_size}")
 
     return train_loader, val_loader
 
@@ -105,73 +111,84 @@ def launch_finetune(
     train_config: TrainConfigParser,
     aug_config: AugmentationConfigParser,
     pretrained_weights_path: Optional[str] = None,
-    experiment_name: Optional[str] = None
+    experiment_name: str = None
 ):
     """
     启动有监督微调
 
     Args:
-        model_config: 模型配置
-        train_config: 训练配置
-        aug_config: 增强配置
-        pretrained_weights_path: 预训练权重路径（可选）
-        experiment_name: 实验名称（可选）
+        model_config: 模型配置解析器
+        train_config: 训练配置解析器
+        aug_config: 增强配置解析器
+        pretrained_weights_path: 预训练权重路径(可选)
+        experiment_name: 实验名称
 
     Returns:
-        model: 训练后的模型
+        model: 训练好的模型
         experiment_dir: 实验目录
         final_model_path: 最终模型路径
     """
     # 设置随机种子
     seed = train_config.get_seed()
     set_seed(seed)
-    print(f"设置随机种子: {seed}")
 
-    # 设置设备
+    # 获取设备
     device = train_config.get_device()
-    print(f"使用设备: {device}")
+    if not torch.cuda.is_available() and device == 'cuda':
+        print("⚠️  CUDA不可用,使用CPU训练")
+        device = 'cpu'
+
+    print("=" * 80)
+    print("有监督微调")
+    print("=" * 80)
+    print(f"设备: {device}")
+    print(f"随机种子: {seed}")
 
     # 创建实验目录
     if experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"finetune_{timestamp}"
 
-    experiment_dir = Path(train_config.get('experiment.save_dir', 'experiments/runs')) / experiment_name
+    experiment_base = train_config.get('experiment.save_dir', 'experiments/runs')
+    experiment_dir = Path(experiment_base) / experiment_name
     experiment_dir.mkdir(parents=True, exist_ok=True)
-    print(f"实验目录: {experiment_dir}")
 
-    # 获取训练参数
-    finetune_params = train_config.get('finetune', {})
-    data_config = train_config.get('data', {})
+    print(f"实验目录: {experiment_dir}")
 
     # 创建模型
     print("\n创建模型...")
     model_params = model_config.get_model_params()
-    model = create_model(model_params)
+    model = create_model(**model_params, enable_contrastive=False)  # 🔧 微调阶段不需要投影头
 
-    # 加载预训练权重（如果提供）
-    if pretrained_weights_path:
+    # 加载预训练权重(如果提供)
+    if pretrained_weights_path is not None and os.path.exists(pretrained_weights_path):
         print(f"\n加载预训练权重: {pretrained_weights_path}")
-        checkpoint = torch.load(pretrained_weights_path, map_location=device)
-
-        if 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-        else:
-            model.load_state_dict(checkpoint, strict=False)
-
+        model.load_pretrained_backbone(pretrained_weights_path)
         print("✓ 预训练权重加载成功")
 
-    model = model.to(device)
+    # 打印模型信息
+    param_dict = model.count_parameters()
     print(f"✓ 模型创建成功")
+    print(f"  - 配置: {model_params['config']}")
+    print(f"  - 总参数: {param_dict['total']:,}")
+    print(f"  - 可训练参数: {param_dict['trainable']:,}")
+
+    # 获取微调配置
+    finetune_params = train_config.get_finetune_params()
+    data_params = train_config.get_data_params()
 
     # 创建数据加载器
     print("\n创建数据加载器...")
     train_loader, val_loader = create_supervised_dataloaders(
-        data_config,
-        aug_config,
-        batch_size=finetune_params.get('batch_size', 32),
-        max_epochs=finetune_params.get('epochs', 100)
+        data_config=data_params,
+        aug_config=aug_config,
+        batch_size=finetune_params['batch_size'],
+        max_epochs=finetune_params['epochs']
     )
+    print(f"✓ 数据加载器创建成功")
+    print(f"  - 训练集: {len(train_loader.dataset)} 样本")
+    print(f"  - 验证集: {len(val_loader.dataset)} 样本")
+    print(f"  - Batch size: {finetune_params['batch_size']}")
 
     # 创建优化器
     print("\n创建优化器...")
@@ -183,31 +200,31 @@ def launch_finetune(
 
     # 创建学习率调度器
     print("\n创建学习率调度器...")
-    scheduler = create_scheduler_from_config(
+    scheduler, needs_metric = create_scheduler_from_config(
         optimizer,
         finetune_params['scheduler'],
-        total_epochs=finetune_params['epochs']
+        total_epochs=finetune_params['epochs'],
+        steps_per_epoch=len(train_loader)
     )
     print(f"✓ 调度器创建成功: {type(scheduler).__name__}")
+    if needs_metric:
+        print(f"  ⚠️  此调度器需要metric,trainer将自动传入验证指标")
 
-    # 准备Mixup配置
-    print("\n准备Mixup配置...")
+    # 检查是否使用Mixup
     mixup_config = None
     if train_config.get('training_mode.use_mixup', False):
-        # 从augmentation_config读取mixup参数
-        mixup_params = aug_config.get_mixup_params()
-
-        # 构建mixup_config字典
+        mixup_params = train_config.get('mixup', {})
         mixup_config = {
+            'alpha': mixup_params.get('alpha', 0.2),
+            'prob': mixup_params.get('prob', 0.5),
             'time_domain': mixup_params.get('time_domain', {}),
             'frequency_domain': mixup_params.get('frequency_domain', {}),
             'feature_level': mixup_params.get('feature_level', {})
         }
 
         print("✓ Mixup配置:")
-        print(f"  - 时域: {mixup_config['time_domain'].get('enable', False)}")
-        print(f"  - 频域: {mixup_config['frequency_domain'].get('enable', False)}")
-        print(f"  - 特征层: {mixup_config['feature_level'].get('enable', False)}")
+        print(f"  - Alpha: {mixup_config['alpha']}")
+        print(f"  - 应用概率: {mixup_config['prob']}")
     else:
         print("✓ Mixup未启用")
 

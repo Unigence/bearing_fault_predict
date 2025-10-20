@@ -107,51 +107,53 @@ def launch_pretrain(
     Returns:
         pretrained_model: 预训练好的模型
         experiment_dir: 实验目录
+        pretrained_weights_path: 预训练权重路径
     """
     # 设置随机种子
     seed = train_config.get_seed()
     set_seed(seed)
-    
+
     # 获取设备
     device = train_config.get_device()
     if not torch.cuda.is_available() and device == 'cuda':
         print("⚠️  CUDA不可用,使用CPU训练")
         device = 'cpu'
-    
+
     print("=" * 80)
     print("对比学习预训练")
     print("=" * 80)
     print(f"设备: {device}")
     print(f"随机种子: {seed}")
-    
+
     # 创建实验目录
     if experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"pretrain_{timestamp}"
-    
+
     experiment_base = train_config.get('experiment.save_dir', 'experiments/runs')
     experiment_dir = Path(experiment_base) / experiment_name
     experiment_dir.mkdir(parents=True, exist_ok=True)
-    
+
     print(f"实验目录: {experiment_dir}")
-    
+
     # 创建模型
     print("\n创建模型...")
     model_params = model_config.get_model_params()
-    model = create_model(**model_params)
-    
+    model = create_model(**model_params, enable_contrastive=True)  # 🔧 启用对比学习模式
+
     # 打印模型信息
     param_dict = model.count_parameters()
     print(f"✓ 模型创建成功")
     print(f"  - 配置: {model_params['config']}")
     print(f"  - 总参数: {param_dict['total']:,}")
     print(f"  - 可训练参数: {param_dict['trainable']:,}")
-    
+    print(f"  - 投影头参数: {param_dict.get('projection_head', 0):,}")
+
     # 获取预训练配置
     pretrain_params = train_config.get_pretrain_params()
     data_params = train_config.get_data_params()
     aug_params = aug_config.get_contrastive_aug_params()
-    
+
     # 创建数据加载器
     print("\n创建数据加载器...")
     train_loader, val_loader = create_contrastive_dataloaders(
@@ -163,7 +165,7 @@ def launch_pretrain(
     print(f"  - 训练集: {len(train_loader.dataset)} 样本")
     print(f"  - 验证集: {len(val_loader.dataset)} 样本")
     print(f"  - Batch size: {pretrain_params['batch_size']}")
-    
+
     # 创建优化器
     print("\n创建优化器...")
     optimizer = create_optimizer_from_config(
@@ -171,16 +173,18 @@ def launch_pretrain(
         pretrain_params['optimizer']
     )
     print(f"✓ 优化器创建成功: {type(optimizer).__name__}")
-    
+
     # 创建学习率调度器
     print("\n创建学习率调度器...")
-    scheduler = create_scheduler_from_config(
+    scheduler, needs_metric = create_scheduler_from_config(
         optimizer,
         pretrain_params['scheduler'],
         total_epochs=pretrain_params['epochs']
     )
     print(f"✓ 调度器创建成功: {type(scheduler).__name__}")
-    
+    if needs_metric:
+        print(f"  ⚠️  此调度器需要metric,trainer将自动传入val_loss")
+
     # 创建训练器
     print("\n创建训练器...")
     trainer = ContrastiveTrainer(
@@ -196,18 +200,18 @@ def launch_pretrain(
         use_amp=train_config.use_amp(),
         gradient_clip_max_norm=pretrain_params['gradient_clip'].get('max_norm', 1.0)
     )
-    
+
     # 设置callbacks
     trainer.setup_callbacks(
         early_stopping_config=pretrain_params.get('early_stopping', {}),
         checkpoint_config=model_config.get_checkpoint_params()
     )
-    
+
     # 开始训练
     print("\n" + "=" * 80)
     print("开始预训练")
     print("=" * 80)
-    
+
     trainer.train(
         epochs=pretrain_params['epochs'],
         log_interval=train_config.get('experiment.logging.log_interval', 10),
@@ -217,17 +221,17 @@ def launch_pretrain(
             'augmentation': aug_config.to_dict()
         }
     )
-    
+
     # 保存预训练权重
     pretrained_weights_path = experiment_dir / 'pretrained_weights.pth'
     trainer.save_pretrained_weights(str(pretrained_weights_path))
-    
+
     print("\n" + "=" * 80)
     print("✓ 预训练完成!")
     print("=" * 80)
     print(f"预训练权重: {pretrained_weights_path}")
     print(f"实验目录: {experiment_dir}")
-    
+
     return model, experiment_dir, pretrained_weights_path
 
 
@@ -237,7 +241,7 @@ if __name__ == '__main__':
     model_config = ModelConfigParser('configs/model_config.yaml')
     train_config = TrainConfigParser('configs/train_config.yaml')
     aug_config = AugmentationConfigParser('configs/augmentation_config.yaml')
-    
+
     # 启动预训练
     model, exp_dir, weights_path = launch_pretrain(
         model_config,

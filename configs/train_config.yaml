@@ -34,28 +34,29 @@ pretrain:
     momentum: 0.9  # 仅SGD使用
   
   # 学习率调度器
+  # 🔧 修复: 使用统一的'type'字段,支持warmup+base_scheduler组合
   scheduler:
-    type: 'cosine_warm_restarts'  # 'cosine', 'cosine_warm_restarts', 'step', 'reduce_on_plateau'
+    type: 'cosine_warm_restarts'  # 调度器类型
     # CosineAnnealingWarmRestarts参数
     T_0: 10  # 重启周期
-    T_mult: 1
-    eta_min: 0.000001
-    # Warmup
-    warmup_epochs: 3
-    warmup_start_lr: 0.0001
-  
+    T_mult: 1  # 重启周期倍增因子
+    eta_min: 0.000001  # 最小学习率
+    # Warmup参数 (可选)
+    warmup_epochs: 3  # 预热轮数
+    warmup_start_lr: 0.0001  # 预热起始学习率
+
   # 对比学习损失
   loss:
     type: 'ntxent'  # 'ntxent' | 'supcon'
     temperature: 0.07
-  
+
   # 早停
   early_stopping:
     enable: true
     patience: 8
     monitor: 'loss'  # 预训练监控loss
     mode: 'min'
-  
+
   # 梯度裁剪
   gradient_clip:
     enable: true
@@ -67,86 +68,68 @@ pretrain:
 finetune:
   # 训练轮数
   epochs: 100
-  
+
   # Batch size
   batch_size: 32
-  
+
   # 优化器
   optimizer:
     type: 'adamw'
-    lr: 0.0005  # 比预训练小
-    weight_decay: 0.0005  # 比预训练大,防过拟合
+    lr: 0.0003  # 微调阶段使用较小学习率
+    weight_decay: 0.0001
     betas: [0.9, 0.999]
-  
-  # 学习率调度器(组合式)
+
+  # 学习率调度器
+  # 🔧 修复: 使用统一的'type'字段
   scheduler:
-    type: 'combined'  # 组合式调度器
-    # Warmup阶段(前5 epochs)
-    warmup_epochs: 5
-    warmup_start_lr: 0.00001
-    # CosineAnnealing阶段(5-80 epochs)
-    cosine_epochs: 75
+    type: 'cosine'  # 调度器类型
+    # CosineAnnealingLR参数
+    T_max: 97  # 100 - warmup_epochs
     eta_min: 0.000001
-    # ReduceLROnPlateau阶段(80+ epochs)
-    plateau_patience: 5
-    plateau_factor: 0.5
-    plateau_min_lr: 0.0000001
-  
+    # Warmup参数
+    warmup_epochs: 3
+    warmup_start_lr: 0.00005
+
   # 损失函数配置
   loss:
-    # 是否使用渐进式损失(动态调整权重)
-    use_progressive: true
-    
     # Focal Loss
     focal:
-      weight: 1.0
+      alpha: null  # 类别权重(null表示自动计算)
       gamma: 2.0
-      # 类别权重计算方法: 'effective_num', 'inverse_freq', 'sqrt_inv_freq', None
-      class_weight_method: 'effective_num'
-      # 类别样本数(用于计算类别权重)
-      class_counts: [160, 120, 180, 150, 100, 150]  # [normal, inner_wear, outer_missing, roller_broken, roller_wear, inner_broken]
-    
-    # ArcFace Loss (渐进式调整)
+      weight: 0.6
+
+    # ArcFace Loss
     arcface:
-      weight_init: 0.3   # 初始权重
-      weight_max: 0.7    # 最大权重
-      # 权重调整: epoch < 30: 0.3, 30-60: 0.5, 60+: 0.7
-    
-    # Label Smoothing
-    label_smoothing: 0.1
-  
-  # 渐进式训练策略
-  progressive:
-    # Focal Loss gamma渐进调整
-    focal_gamma_schedule:
-      enable: false  # 暂不启用gamma调整
-      init: 2.0
-      min: 1.0
-  
+      s: 30.0  # 特征缩放因子
+      m: 0.5   # margin
+      weight: 0.3
+
+    # Center Loss
+    center:
+      num_features: 768  # 融合后特征维度
+      lambda_c: 0.1
+      weight: 0.1
+
   # 早停
   early_stopping:
     enable: true
     patience: 15
-    monitor: 'val_acc'
+    monitor: 'val_accuracy'  # 微调监控准确率
     mode: 'max'
-    restore_best_weights: true
-  
+
   # 梯度裁剪
   gradient_clip:
     enable: true
     max_norm: 1.0
-  
-  # Backbone冻结策略
-  freeze_strategy:
-    # 是否在微调初期冻结backbone
+
+  # 冻结backbone策略
+  freeze_backbone:
     enable: false
-    # 冻结的epoch数
-    freeze_epochs: 0
-    # 冻结比例
-    freeze_ratio: 0.5
+    freeze_ratio: 0.5  # 冻结前50%的层
+    unfreeze_epoch: 20  # 第20个epoch解冻
 
 # ====================================================================================
-# Mixup参数
+# Mixup配置
 # ====================================================================================
 mixup:
   # Alpha参数(控制混合程度)
@@ -163,22 +146,22 @@ data:
   # 数据目录
   train_dir: 'raw_datasets/train'
   test_dir: 'raw_datasets/test'
-  
+
   # 窗口参数
   window_size: 512
   window_step: 256
-  
+
   # 时频变换方法: 'stft' | 'cwt'
   timefreq_method: 'stft'
-  
+
   # K-fold交叉验证
   n_folds: 5
   current_fold: 0
-  
+
   # DataLoader参数
   num_workers: 4
   pin_memory: true
-  
+
   # 是否缓存数据到内存
   cache_data: true
 
@@ -188,17 +171,17 @@ data:
 experiment:
   # 实验名称
   name: 'bearing_diagnosis'
-  
+
   # 实验保存目录
   save_dir: 'experiments/runs'
-  
+
   # 日志
   logging:
     # 是否使用tensorboard
     use_tensorboard: true
     # 日志保存频率(每N个batch记录一次)
     log_interval: 10
-  
+
   # 可视化
   visualization:
     # 是否保存训练曲线
@@ -223,3 +206,59 @@ device:
   type: 'cuda'
   # 是否使用混合精度训练
   use_amp: false
+
+
+# ====================================================================================
+# 调度器配置说明
+# ====================================================================================
+# 📖 支持的调度器类型及其参数:
+#
+# 1. 'step' - StepLR
+#    参数: step_size, gamma
+#
+# 2. 'multistep' - MultiStepLR
+#    参数: milestones, gamma
+#
+# 3. 'cosine' - CosineAnnealingLR
+#    参数: T_max, eta_min
+#
+# 4. 'cosine_warm_restarts' - CosineAnnealingWarmRestarts
+#    参数: T_0, T_mult, eta_min
+#
+# 5. 'plateau' / 'reduce_on_plateau' - ReduceLROnPlateau
+#    参数: mode, factor, patience, threshold
+#    注意: 此调度器需要传入metric,trainer会自动处理
+#
+# 6. 'exponential' - ExponentialLR
+#    参数: gamma
+#
+# 7. 'cyclic' - CyclicLR
+#    参数: base_lr, max_lr, step_size_up
+#
+# 8. 'onecycle' - OneCycleLR
+#    参数: max_lr_onecycle, total_steps 或 (epochs, steps_per_epoch)
+#
+# 🔥 Warmup支持:
+#    任何调度器都可以添加warmup参数:
+#    - warmup_epochs: 预热轮数
+#    - warmup_start_lr: 预热起始学习率
+#
+#    示例:
+#    scheduler:
+#      type: 'cosine'
+#      T_max: 97
+#      eta_min: 1e-6
+#      warmup_epochs: 3
+#      warmup_start_lr: 1e-5
+#
+# 🔥 Combined调度器 (高级用法):
+#    可以在不同epoch使用不同调度器
+#    scheduler:
+#      type: 'combined'
+#      schedulers_config:
+#        - {type: 'warmup', warmup_epochs: 5, warmup_start_lr: 1e-5}
+#        - {type: 'cosine', T_max: 45, eta_min: 1e-6}
+#      switch_epochs: [5]  # 在epoch 5切换
+#
+# ====================================================================================
+
