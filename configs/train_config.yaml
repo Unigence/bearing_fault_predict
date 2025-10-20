@@ -11,7 +11,7 @@ training_mode:
   pipeline: 'pretrain_finetune'  # 'pretrain_finetune' | 'direct_train'
   
   # 是否启用mixup
-  use_mixup: true
+  use_mixup: false
   # 是否启用特征层mixup
   use_feature_mixup: false
 
