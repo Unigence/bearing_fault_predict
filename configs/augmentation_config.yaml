@@ -201,6 +201,7 @@ mixup:
     enable: false  # 暂不启用
     alpha: 0.1
     prob: 0.3
+    mix_mode: 'magnitude'   # magnitude - 仅混合幅度谱；low_freq - 仅混合低频部分
   
   # 特征层Mixup(暂不启用)
   feature_level:
