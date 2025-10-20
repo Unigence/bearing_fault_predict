@@ -76,7 +76,7 @@ class ContrastiveTrainer(TrainerBase):
         print(f"  - Scheduler需要metric: {self.scheduler_needs_metric}")
 
     def _check_scheduler_needs_metric(self) -> bool:
-        """检查scheduler是否需要metric（用于ReduceLROnPlateau）"""
+        """检查scheduler是否需要metric(用于ReduceLROnPlateau)"""
         if self.scheduler is None:
             return False
 
@@ -91,6 +91,51 @@ class ContrastiveTrainer(TrainerBase):
                     return True
 
         return False
+
+    def compute_loss(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        计算对比学习损失
+
+        Args:
+            batch: 数据batch,应包含'view1'和'view2'两个增强版本
+
+        Returns:
+            loss: 总损失
+            loss_dict: 损失详情字典
+        """
+        # 确保batch格式正确
+        if 'view1' not in batch or 'view2' not in batch:
+            raise ValueError(
+                "对比学习数据集应返回两个增强版本(view1, view2)\n"
+                "请检查ContrastiveDataset.__getitem__是否正确实现"
+            )
+
+        # 将数据移到设备
+        view1 = {k: v.to(self.device) for k, v in batch['view1'].items()}
+        view2 = {k: v.to(self.device) for k, v in batch['view2'].items()}
+
+        # 前向传播 - 对比学习模式
+        z1, z2 = self.model({'view1': view1, 'view2': view2}, mode='contrastive')
+
+        # 计算对比学习损失
+        if self.loss_type == 'ntxent':
+            loss = self.criterion(z1, z2)
+            loss_dict = {
+                'contrastive_loss': loss.item(),
+                'total': loss.item()
+            }
+        else:  # supcon
+            # 有监督对比学习需要标签
+            if 'label' not in batch:
+                raise ValueError("SupCon需要标签,但batch中没有'label'")
+            labels = batch['label'].to(self.device)
+            loss = self.criterion(z1, z2, labels)
+            loss_dict = {
+                'contrastive_loss': loss.item(),
+                'total': loss.item()
+            }
+
+        return loss, loss_dict
 
     def train_epoch(self) -> Dict[str, float]:
         """训练一个epoch"""
@@ -195,6 +240,7 @@ class ContrastiveTrainer(TrainerBase):
                 view1 = {k: v.to(self.device) for k, v in batch['view1'].items()}
                 view2 = {k: v.to(self.device) for k, v in batch['view2'].items()}
 
+                # 获取标签(如果有)
                 labels = None
                 if 'label' in batch:
                     labels = batch['label'].to(self.device)
@@ -216,53 +262,11 @@ class ContrastiveTrainer(TrainerBase):
         avg_loss = total_loss / num_batches
         return {'loss': avg_loss}
 
-    def _update_scheduler(self, val_metrics: Dict[str, float]):
-        """
-        更新学习率调度器
 
-        Args:
-            val_metrics: 验证集指标字典
-        """
-        if self.scheduler is None:
-            return
-
-        # 🔧 修复: 如果scheduler需要metric,传入val_loss
-        if self.scheduler_needs_metric:
-            metric_value = val_metrics.get('loss', None)
-            if metric_value is None:
-                print("⚠️  Warning: ReduceLROnPlateau需要metric,但未找到loss")
-                return
-            self.scheduler.step(metric_value)
-        else:
-            # 普通scheduler不需要metric
-            self.scheduler.step()
-
-    def save_pretrained_weights(self, save_path: str):
-        """
-        保存预训练权重（不包括投影头）
-
-        Args:
-            save_path: 保存路径
-        """
-        # 获取backbone权重（排除projection_head）
-        backbone_state = {
-            k: v for k, v in self.model.state_dict().items()
-            if not k.startswith('projection_head')
-        }
-
-        torch.save({
-            'backbone_state_dict': backbone_state,
-            'epoch': self.current_epoch,
-        }, save_path)
-
-        print(f"✓ 预训练权重已保存: {save_path}")
-        print(f"  (不包括projection_head)")
-
-
+# 测试代码
 if __name__ == '__main__':
-    """测试代码"""
     import sys
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     from models import create_model
     from datasets import ContrastiveDataset
@@ -278,7 +282,7 @@ if __name__ == '__main__':
     model = create_model(config='small', enable_contrastive=True)
     print(f"✓ 模型创建成功")
 
-    # 创建数据集（使用少量数据测试）
+    # 创建数据集(使用少量数据测试)
     print("\n创建数据集...")
     train_dataset = ContrastiveDataset(
         data_dir='raw_datasets/train',
@@ -347,9 +351,3 @@ if __name__ == '__main__':
     print("\n" + "=" * 80)
     print("✓ 所有测试通过!")
     print("=" * 80)
-
-
-
-
-
-
