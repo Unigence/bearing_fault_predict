@@ -189,45 +189,62 @@ class OptimizerFactory:
         return info
 
 
-def create_optimizer_from_config(model: nn.Module, config: Dict[str, Any]) -> Optimizer:
+def create_optimizer_from_config(model, config: dict):
     """
-    便捷函数：从配置字典创建优化器
+    从配置字典创建优化器（处理参数名映射）
 
-    ⚠️ 注意：这是修复后的函数名，与launcher中的导入一致
+    这个函数是为了兼容不同的配置格式而创建的适配器。
+    它会自动处理以下参数名映射：
+    - 'type' 或 'name' → 'optimizer_name'
+    - 'lr' → 'learning_rate'
+    - 列表格式的 'betas' → 元组格式
 
     Args:
-        model: 模型
-        config: 配置字典
+        model: PyTorch 模型实例
+        config: 优化器配置字典
 
     Returns:
         optimizer: 优化器实例
 
-    Example:
+    配置示例:
         config = {
-            'name': 'adam',
-            'learning_rate': 1e-3,
-            'weight_decay': 1e-4,
-            'betas': (0.9, 0.999)
+            'type': 'adamw',          # 或 'name': 'adamw'
+            'lr': 0.001,              # 会被映射为 learning_rate
+            'weight_decay': 0.0001,
+            'betas': [0.9, 0.999]     # 会被转换为 tuple
         }
-    """
-    optimizer_name = config.get('name', 'adam')
-    optimizer_config = {k: v for k, v in config.items() if k != 'name'}
 
+    使用示例:
+        optimizer = create_optimizer_from_config(model, pretrain_config['optimizer'])
+    """
+    # 复制配置，避免修改原配置
+    config = config.copy()
+
+    # 参数名映射：处理不同的参数命名约定
+    param_mapping = {
+        'type': 'optimizer_name',  # YAML中常用 'type'
+        'name': 'optimizer_name',  # 有些配置用 'name'
+        'lr': 'learning_rate',  # PyTorch优化器用 'lr'，但我们的工厂方法用 'learning_rate'
+    }
+
+    # 应用参数映射
+    for old_key, new_key in param_mapping.items():
+        if old_key in config:
+            config[new_key] = config.pop(old_key)
+
+    # 提取优化器名称
+    optimizer_name = config.pop('optimizer_name', 'adam')
+
+    # 转换列表为元组（PyTorch的betas参数需要是tuple）
+    if 'betas' in config and isinstance(config['betas'], list):
+        config['betas'] = tuple(config['betas'])
+
+    # 调用工厂方法创建优化器
     return OptimizerFactory.create_optimizer(
         model=model,
         optimizer_name=optimizer_name,
-        **optimizer_config
+        **config
     )
-
-
-# 保留旧的函数名以保持向后兼容
-def create_optimizer(model: nn.Module, config: Dict[str, Any]) -> Optimizer:
-    """
-    便捷函数：从配置字典创建优化器（向后兼容）
-
-    建议使用 create_optimizer_from_config
-    """
-    return create_optimizer_from_config(model, config)
 
 
 if __name__ == '__main__':
