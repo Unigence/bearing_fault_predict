@@ -34,7 +34,6 @@ pretrain:
     momentum: 0.9  # 仅SGD使用
   
   # 学习率调度器
-  # 🔧 修复: 使用统一的'type'字段,支持warmup+base_scheduler组合
   scheduler:
     type: 'cosine_warm_restarts'  # 调度器类型
     # CosineAnnealingWarmRestarts参数
@@ -80,7 +79,6 @@ finetune:
     betas: [0.9, 0.999]
 
   # 学习率调度器
-  # 🔧 修复: 使用统一的'type'字段
   scheduler:
     type: 'cosine'  # 调度器类型
     # CosineAnnealingLR参数
