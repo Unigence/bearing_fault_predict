@@ -237,7 +237,9 @@ mixup:
 # ====================================================================================
 # 在训练过程中逐渐增强数据增强强度
 progressive:
-  enable: false        # 是否启用渐进式增强
+  enable: true         # 是否启用渐进式增强
+  use_constant: false   # 是否使用恒定强度
+  default_intensity: 'medium'  # 设置强度: weak/medium/strong
 
   # 增强强度变化策略
   schedule:
