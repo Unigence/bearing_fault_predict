@@ -8,7 +8,7 @@ training_mode:
   # 训练流程: 'pretrain_finetune' 或 'direct_train'
   # pretrain_finetune: 对比学习预训练 + 有监督微调
   # direct_train: 直接有监督训练(跳过预训练)
-  pipeline: 'pretrain_finetune'  # 'pretrain_finetune' | 'direct_train'
+  pipeline: 'direct_train'  # 'pretrain_finetune' | 'direct_train'
 
 # ====================================================================================
 # 对比学习预训练阶段

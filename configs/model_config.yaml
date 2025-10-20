@@ -109,7 +109,7 @@ pretrain:
   use_pretrain: false
   
   # 预训练权重路径
-  checkpoint_path: null
+  checkpoint_path: 'experiments\runs\exp_20251020_212412_pretrain\pretrained_weights.pth'
   
   # 是否冻结backbone
   freeze_backbone: false
