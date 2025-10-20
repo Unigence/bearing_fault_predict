@@ -322,8 +322,6 @@ def create_scheduler_from_config(
     """
     便捷函数：从配置字典创建调度器
 
-    ⚠️ 注意：这是修复后的函数名，与launcher中的导入一致
-
     Args:
         optimizer: 优化器
         config: 配置字典
@@ -354,19 +352,6 @@ def create_scheduler_from_config(
         scheduler_name=scheduler_name,
         **scheduler_config
     )
-
-
-# 保留旧的函数名以保持向后兼容
-def create_scheduler(
-    optimizer: optim.Optimizer,
-    config: Dict[str, Any]
-) -> _LRScheduler:
-    """
-    便捷函数：从配置字典创建调度器（向后兼容）
-
-    建议使用 create_scheduler_from_config
-    """
-    return create_scheduler_from_config(optimizer, config)
 
 
 if __name__ == '__main__':
