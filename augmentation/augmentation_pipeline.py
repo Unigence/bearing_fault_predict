@@ -13,7 +13,6 @@ from .frequency_aug import (
     FrequencyMasking, MagnitudeMasking, RandomFiltering,
     PhaseShift, Compose as FreqCompose
 )
-from .mixup import Mixup, CutMix
 
 
 class AugmentationPipeline:

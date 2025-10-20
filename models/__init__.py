@@ -25,7 +25,7 @@ from .modules import (
     MultiHeadPooling1D
 )
 
-from multimodal_model import (
+from .multimodal_model import (
     create_model
 )
 
