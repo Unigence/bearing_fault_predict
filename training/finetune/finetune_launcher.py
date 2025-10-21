@@ -206,7 +206,7 @@ class ProgressiveAugmentationTrainer(SupervisedTrainer):
             self._update_lr(val_metrics)
 
             # 更新渐进式损失的epoch
-            self.update_epoch(epoch, epochs)
+            # self.update_epoch(epoch, epochs)
 
             # 记录指标
             epoch_metrics = {**train_metrics, **val_metrics}
@@ -294,7 +294,7 @@ def launch_finetune(
     # 加载预训练权重
     if pretrained_weights and os.path.exists(pretrained_weights):
         print(f"\n加载预训练权重: {pretrained_weights}")
-        model.load_pretrained_weights(pretrained_weights)
+        model.load_pretrained_backbone(pretrained_weights)
 
     # 打印模型信息
     param_dict = model.count_parameters()
@@ -353,7 +353,7 @@ def launch_finetune(
         use_amp=train_config.use_amp(),
         mixup_config=train_config.get('mixup', None),
         gradient_clip_max_norm=finetune_params['gradient_clip'].get('max_norm', 1.0),
-        use_progressive_aug=use_progressive,  # 🔧 传入渐进式增强标志
+        use_progressive_aug=use_progressive,
         max_epochs=finetune_params['epochs']
     )
 
@@ -395,13 +395,3 @@ if __name__ == '__main__':
     print("=" * 70)
     print("微调启动脚本测试（已修复版本）")
     print("=" * 70)
-
-    print("\n✅ 修复说明:")
-    print("  3. 渐进式增强动态更新 - 每个epoch自动更新augmentation强度")
-    print("     - 创建了ProgressiveAugmentationTrainer类")
-    print("     - 在每个epoch开始前调用update_augmentation()")
-    print("     - 支持weak->medium->strong的平滑过渡")
-
-    print("\n✓ 微调启动脚本模块加载成功")
-    print("=" * 70)
-
