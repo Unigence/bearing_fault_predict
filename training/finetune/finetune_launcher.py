@@ -231,6 +231,9 @@ class ProgressiveAugmentationTrainer(SupervisedTrainer):
                 print(f"\n早停触发,在第 {epoch+1} 轮停止训练")
                 break
 
+        # 绘制训练曲线
+        self._plot_curves()
+
         # 训练结束
         print("\n" + "=" * 80)
         print("训练完成!")
