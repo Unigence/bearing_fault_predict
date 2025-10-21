@@ -224,6 +224,7 @@ class RandomFiltering(FrequencyAugmentation):
 
         # 转回tensor
         if is_tensor:
+            filtered = np.ascontiguousarray(filtered)
             filtered = torch.from_numpy(filtered).float()
 
         return filtered
