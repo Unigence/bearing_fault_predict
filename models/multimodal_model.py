@@ -297,21 +297,31 @@ class MultimodalBearingDiagnosisModel(nn.Module):
         )  # (B, fusion_output_dim)
         
         # ==================== 3. 分类 ====================
-        if self.training:
-            # 训练模式: 返回双头输出
-            labels = batch.get('labels', None)
-            softmax_logits, arcface_logits, features = self.classifier(
-                fused_feat, 
-                labels=labels, 
-                mode='train'
-            )
-            return softmax_logits, arcface_logits, features
-        else:
-            # 推理模式: 只返回logits
-            logits = self.classifier(fused_feat, mode='eval')
-            if return_features:
-                return logits, fused_feat
-            return logits
+        # 修正：监督学习中对于验证也采用双头验证
+        labels = batch.get('labels', None)
+        softmax_logits, arcface_logits, features = self.classifier(
+            fused_feat,
+            labels=labels,
+            mode='train'
+        )
+        return softmax_logits, arcface_logits, features
+        # if self.training:
+        #     # 训练模式: 返回双头输出
+        #     labels = batch.get('labels', None)
+        #     softmax_logits, arcface_logits, features = self.classifier(
+        #         fused_feat,
+        #         labels=labels,
+        #         mode='train'
+        #     )
+        #     return softmax_logits, arcface_logits, features
+        # else:
+        #     # 推理模式: 只返回logits
+        #     logits = self.classifier(
+        #         fused_feat,
+        #         mode='eval')
+        #     if return_features:
+        #         return logits, fused_feat
+        #     return logits
     
     def _forward_contrastive(self, batch):
         """
