@@ -197,9 +197,9 @@ class ProgressiveAugmentation:
     
     def get_intensity(self):
         """根据当前epoch返回增强强度"""
-        if self.current_epoch < self.max_epochs * 0.3:
+        if self.current_epoch < self.max_epochs * 0.7:
             return 'weak'
-        elif self.current_epoch < self.max_epochs * 0.7:
+        elif self.current_epoch <= self.max_epochs:
             return 'medium'
         else:
             return 'strong'
@@ -213,30 +213,30 @@ class ProgressiveAugmentation:
 def get_augmentation_pipeline(stage='supervised', epoch=0, max_epochs=100, mode='train'):
     """
     获取增强管道的工厂函数
-    
+
     Args:
         stage: 'pretrain', 'supervised'
         epoch: 当前epoch
         max_epochs: 总epoch数
         mode: 'train' 或 'val'
-    
+
     Returns:
         增强管道实例
     """
     if mode != 'train':
         # 验证集不增强
         return AugmentationPipeline(mode='val')
-    
+
     if stage == 'pretrain':
         # 对比学习预训练：使用对比学习增强
         return ContrastiveAugmentation()
-    
+
     elif stage == 'supervised':
         # 有监督训练：使用渐进式增强
         progressive = ProgressiveAugmentation(max_epochs)
         progressive.set_epoch(epoch)
         return progressive.get_pipeline(mode='train')
-    
+
     else:
         raise ValueError(f"Unknown stage: {stage}")
 

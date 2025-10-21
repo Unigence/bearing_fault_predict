@@ -109,7 +109,7 @@ pretrain:
   use_pretrain: true
   
   # 预训练权重路径
-  checkpoint_path: 'E:\KERTHIC_PROJECTS\Projects\Python_Projects\bearing_fault_predict\experiments\runs\exp_20251021_092147_pretrain\pretrained_weights.pth'
+  checkpoint_path: 'E:\KERTHIC_PROJECTS\Projects\Python_Projects\bearing_fault_predict\experiments\runs\exp_20251021_102730_pretrain\pretrained_weights.pth'
   
   # 是否冻结backbone
   freeze_backbone: false

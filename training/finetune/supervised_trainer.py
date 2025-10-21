@@ -39,7 +39,9 @@ class SupervisedTrainer(TrainerBase):
         experiment_dir: str = 'experiments/runs',
         use_amp: bool = False,
         mixup_config: Optional[Dict[str, Any]] = None,
-        gradient_clip_max_norm: float = 1.0
+        gradient_clip_max_norm: float = 1.0,
+        use_progressive_aug: bool = False,
+        max_epochs: int = 100
     ):
         """
         Args:
@@ -61,6 +63,8 @@ class SupervisedTrainer(TrainerBase):
         )
 
         self.gradient_clip_max_norm = gradient_clip_max_norm
+        self.use_progressive_aug = use_progressive_aug
+        self.max_epochs = max_epochs
 
         # 创建损失函数
         self.criterion = self._create_criterion(loss_config)
@@ -136,6 +140,49 @@ class SupervisedTrainer(TrainerBase):
 
         return device_batch
 
+    def update_epoch(self, epoch: int, total_epochs: int):
+        """
+        新增方法: 更新epoch相关的配置
+
+        用于:
+        1. 渐进式增强 - 更新数据增强强度
+        2. 渐进式损失 - 更新损失函数权重
+
+        Args:
+            epoch: 当前epoch
+            total_epochs: 总epoch数
+        """
+        # 1. 更新渐进式增强
+        if self.use_progressive_aug:
+            from augmentation import get_augmentation_pipeline
+
+            new_augmentation = get_augmentation_pipeline(
+                stage='supervised',
+                epoch=epoch,
+                max_epochs=total_epochs,
+                mode='train'
+            )
+
+            # 更新dataset的augmentation
+            self.train_loader.dataset.augmentation = new_augmentation
+
+            # 打印当前增强强度
+            progress = epoch / total_epochs
+            if progress < 0.3:
+                intensity = "弱"
+            elif progress < 0.7:
+                intensity = "中"
+            else:
+                intensity = "强"
+
+            print(f"  📊 Epoch {epoch + 1}: 更新增强强度 -> {intensity} (progress={progress:.2f})")
+
+        # 2. 更新渐进式损失权重
+        if isinstance(self.criterion, ProgressiveCombinedLoss):
+            progress = epoch / total_epochs
+            self.criterion.update_schedule(progress)
+            print(f"  📊 Epoch {epoch + 1}: 更新损失权重 (progress={progress:.2f})")
+
     def train_epoch(self) -> Dict[str, float]:
         """
         训练一个epoch
@@ -152,7 +199,7 @@ class SupervisedTrainer(TrainerBase):
         pbar = tqdm(self.train_loader, desc=f"Training Epoch {self.current_epoch+1}")
 
         for batch_idx, batch in enumerate(pbar):
-            # 【关键修复】：先将整个batch移到设备
+            # 先将整个batch移到设备
             batch = self._move_batch_to_device(batch)
 
             # 应用输入层mixup（如果启用）
@@ -301,6 +348,34 @@ class SupervisedTrainer(TrainerBase):
             'val_acc': avg_acc
         }
 
+    def _print_epoch_summary(
+        self,
+        epoch: int,
+        total_epochs: int,
+        train_metrics: Dict[str, float],
+        val_metrics: Dict[str, float],
+        epoch_time: float
+    ):
+        """
+        打印epoch总结
+
+        Args:
+            epoch: 当前epoch
+            total_epochs: 总epoch数
+            train_metrics: 训练指标
+            val_metrics: 验证指标
+            epoch_time: epoch耗时
+        """
+        lr = self.optimizer.param_groups[0]['lr']
+
+        print(f"\n{'=' * 80}")
+        print(f"Epoch [{epoch + 1:3d}/{total_epochs}] 总结:")
+        print(f"{'=' * 80}")
+        print(f"  时间: {epoch_time:.2f}s | 学习率: {lr:.6f}")
+        print(f"  训练 - Loss: {train_metrics['train_loss']:.4f} | Acc: {train_metrics['train_acc']:.4f}")
+        print(f"  验证 - Loss: {val_metrics['val_loss']:.4f} | Acc: {val_metrics['val_acc']:.4f}")
+        print(f"{'=' * 80}\n")
+
     def compute_loss(self, batch, labels=None):
         """
         计算损失（用于基类的通用训练流程）
@@ -416,15 +491,14 @@ class SupervisedTrainer(TrainerBase):
             self.current_epoch = epoch
             epoch_start_time = time.time()
 
-            # 🔧 如果使用渐进式损失，更新损失权重
-            if isinstance(self.criterion, ProgressiveCombinedLoss):
-                self.criterion.update_weights(epoch, epochs)
+            # 随epoch更新损失权重和数据增强方式
+            self.update_epoch(epoch, epochs)
 
             # 训练一个epoch
-            train_metrics = self.train_epoch(epoch=epoch, log_interval=log_interval)
+            train_metrics = self.train_epoch()
 
             # 验证一个epoch
-            val_metrics = self.validate_epoch(epoch=epoch)
+            val_metrics = self.validate_epoch()
 
             # 更新学习率
             self._update_lr(val_metrics)
@@ -470,27 +544,6 @@ class SupervisedTrainer(TrainerBase):
 
         # 加载最佳模型
         self._load_best_model()
-
-    def _print_epoch_summary(
-            self,
-            epoch: int,
-            total_epochs: int,
-            train_metrics: Dict[str, float],
-            val_metrics: Dict[str, float],
-            epoch_time: float
-    ):
-        """打印epoch总结信息"""
-        lr = self.optimizer.param_groups[0]['lr']
-
-        print(f"\n{'=' * 80}")
-        print(f"Epoch [{epoch + 1:3d}/{total_epochs}] 总结:")
-        print(f"  - 训练损失: {train_metrics['train_loss']:.4f}")
-        print(f"  - 训练准确率: {train_metrics['train_acc']:.4f}")
-        print(f"  - 验证损失: {val_metrics['val_loss']:.4f}")
-        print(f"  - 验证准确率: {val_metrics['val_acc']:.4f}")
-        print(f"  - 学习率: {lr:.6f}")
-        print(f"  - 用时: {epoch_time:.2f}s")
-        print(f"{'=' * 80}")
 
     def _plot_curves(self):
         """

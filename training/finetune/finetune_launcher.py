@@ -1,5 +1,10 @@
 """
-微调启动脚本
+微调启动脚本 (修复版)
+修复内容:
+1. 移除ProgressiveAugmentationTrainer类 (功能已整合到SupervisedTrainer)
+2. 修复数据增强配置逻辑,支持禁用/恒定/渐进式三种模式
+3. 修复预训练权重加载逻辑
+4. 简化代码结构
 """
 import torch
 import os
@@ -31,6 +36,11 @@ def create_supervised_dataloaders(
     """
     创建有监督数据加载器
 
+    修复内容:
+    1. 支持禁用数据增强
+    2. 支持恒定增强强度选择
+    3. 支持渐进式增强
+
     Args:
         data_config: 数据配置
         aug_config: 增强配置解析器
@@ -38,29 +48,38 @@ def create_supervised_dataloaders(
         max_epochs: 最大训练轮数(用于渐进式增强)
 
     Returns:
-        train_loader, val_loader
+        train_loader, val_loader, use_progressive
     """
-    # 创建训练增强
-    # 使用渐进式增强或恒定增强
-    if aug_config.use_progressive() and not aug_config.use_constant():
-        # 渐进式增强(epoch=0时使用weak)
+    # 🔧 修复: 支持三种数据增强模式
+    enable_progressive = aug_config.use_progressive()
+    enable_constant = aug_config.use_constant()
+
+    # 判断增强模式
+    if not enable_progressive and not enable_constant:
+        # 模式1: 禁用数据增强
+        train_augmentation = None
+        use_progressive = False
+        print(f"  数据增强: 禁用")
+    elif enable_constant:
+        # 模式2: 恒定增强
+        intensity = aug_config.get_default_intensity()  # weak/medium/strong
         train_augmentation = get_augmentation_pipeline(
             stage='supervised',
-            epoch=0,
+            intensity=intensity,  # 直接指定强度
+            mode='train'
+        )
+        use_progressive = False
+        print(f"  数据增强: 恒定增强 (强度={intensity})")
+    else:
+        # 模式3: 渐进式增强
+        train_augmentation = get_augmentation_pipeline(
+            stage='supervised',
+            epoch=0,  # 初始使用weak
             max_epochs=max_epochs,
             mode='train'
         )
         use_progressive = True
-    else:
-        # 恒定增强
-        intensity = aug_config.get_default_intensity()
-        train_augmentation = get_augmentation_pipeline(
-            stage='supervised',
-            epoch=int(max_epochs * 0.5),  # 使用中等epoch对应的强度
-            max_epochs=max_epochs,
-            mode='train'
-        )
-        use_progressive = False
+        print(f"  数据增强: 渐进式增强")
 
     # 创建数据集
     train_dataset = BearingDataset(
@@ -109,137 +128,6 @@ def create_supervised_dataloaders(
     return train_loader, val_loader, use_progressive
 
 
-class ProgressiveAugmentationTrainer(SupervisedTrainer):
-    """
-    继承自SupervisedTrainer,添加每个epoch更新augmentation的功能
-    """
-
-    def __init__(
-        self,
-        *args,
-        use_progressive_aug: bool = False,
-        max_epochs: int = 100,
-        **kwargs
-    ):
-        """
-        Args:
-            use_progressive_aug: 是否使用渐进式增强
-            max_epochs: 最大epoch数
-        """
-        super().__init__(*args, **kwargs)
-        self.use_progressive_aug = use_progressive_aug
-        self.max_epochs = max_epochs
-
-        if self.use_progressive_aug:
-            print(f"  ✅ 启用渐进式增强,将在每个epoch更新augmentation强度")
-
-    def update_augmentation(self, epoch: int):
-        """
-        更新训练集的augmentation
-
-        Args:
-            epoch: 当前epoch
-        """
-        if not self.use_progressive_aug:
-            return
-
-        # 创建新的augmentation pipeline
-        new_augmentation = get_augmentation_pipeline(
-            stage='supervised',
-            epoch=epoch,
-            max_epochs=self.max_epochs,
-            mode='train'
-        )
-
-        # 更新dataset的augmentation
-        self.train_loader.dataset.augmentation = new_augmentation
-
-        # 打印当前增强强度
-        progress = epoch / self.max_epochs
-        if progress < 0.3:
-            intensity = "弱"
-        elif progress < 0.7:
-            intensity = "中"
-        else:
-            intensity = "强"
-
-        print(f"  📊 Epoch {epoch+1}: 更新增强强度 -> {intensity} (progress={progress:.2f})")
-
-    def train(
-        self,
-        epochs: int,
-        log_interval: int = 10,
-        save_config: Optional[dict] = None
-    ):
-        """
-        重写train方法,在每个epoch开始前更新augmentation
-
-        Args:
-            epochs: 训练轮数
-            log_interval: 日志打印间隔
-            save_config: 保存配置
-        """
-        print("=" * 80)
-        print(f"开始训练: {epochs} epochs")
-        if self.use_progressive_aug:
-            print("  ✅ 渐进式增强已启用")
-        print("=" * 80)
-
-        # 保存配置
-        if save_config:
-            self._save_config(save_config)
-
-        # 训练循环
-        for epoch in range(epochs):
-            self.current_epoch = epoch
-
-            # 每个epoch开始前更新augmentation
-            self.update_augmentation(epoch)
-
-            # 训练一个epoch
-            train_metrics = self.train_epoch()
-
-            # 验证一个epoch
-            val_metrics = self.validate_epoch()
-
-            # 更新学习率
-            self._update_lr(val_metrics)
-
-            # 更新渐进式损失的epoch
-            # self.update_epoch(epoch, epochs)
-
-            # 记录指标
-            epoch_metrics = {**train_metrics, **val_metrics}
-            self.metrics_tracker.update(epoch_metrics)
-
-            # 回调
-            callback_metrics = {
-                'epoch': epoch,
-                'train_loss': train_metrics.get('train_loss', 0),
-                'val_loss': val_metrics.get('val_loss', 0),
-                'val_acc': val_metrics.get('val_acc', 0)
-            }
-            self.callbacks.on_epoch_end(epoch, callback_metrics, self.model, self.optimizer)
-
-            # 打印日志
-            import time
-            epoch_time = 0  # 可以在实际实现中计时
-            self._print_epoch_log(epoch, epochs, train_metrics, val_metrics, epoch_time)
-
-            # 检查早停
-            if self.callbacks.should_stop():
-                print(f"\n早停触发,在第 {epoch+1} 轮停止训练")
-                break
-
-        # 绘制训练曲线
-        self._plot_curves()
-
-        # 训练结束
-        print("\n" + "=" * 80)
-        print("训练完成!")
-        print("=" * 80)
-
-
 def launch_finetune(
     model_config: ModelConfigParser,
     train_config: TrainConfigParser,
@@ -250,11 +138,15 @@ def launch_finetune(
     """
     启动微调
 
+    修复内容:
+    1. 修复预训练权重加载逻辑 - 支持从yaml配置加载
+    2. 简化代码结构
+
     Args:
         model_config: 模型配置解析器
         train_config: 训练配置解析器
         aug_config: 增强配置解析器
-        pretrained_weights: 预训练权重路径
+        pretrained_weights: 预训练权重路径 (优先级高于yaml配置)
         experiment_name: 实验名称
 
     Returns:
@@ -294,10 +186,30 @@ def launch_finetune(
     model_params = model_config.get_model_params()
     model = create_model(**model_params, enable_contrastive=False)
 
+    # 🔧 修复: 预训练权重加载逻辑
+    # 优先级: 命令行参数 > yaml配置
+    if pretrained_weights is None:
+        # 尝试从yaml配置加载
+        pretrain_config = model_config.get_pretrain_params()
+        if pretrain_config.get('use_pretrain', False):
+            pretrained_weights = pretrain_config.get('checkpoint_path', None)
+            if pretrained_weights:
+                print(f"\n✓ 从配置文件读取预训练权重路径: {pretrained_weights}")
+
     # 加载预训练权重
     if pretrained_weights and os.path.exists(pretrained_weights):
         print(f"\n加载预训练权重: {pretrained_weights}")
-        model.load_pretrained_backbone(pretrained_weights)
+        try:
+            model.load_pretrained_backbone(pretrained_weights)
+            print(f"✓ 预训练权重加载成功")
+        except Exception as e:
+            print(f"⚠️  预训练权重加载失败: {e}")
+            print(f"   继续使用随机初始化权重...")
+    elif pretrained_weights:
+        print(f"⚠️  预训练权重文件不存在: {pretrained_weights}")
+        print(f"   继续使用随机初始化权重...")
+    else:
+        print(f"\n使用随机初始化权重 (未指定预训练权重)")
 
     # 打印模型信息
     param_dict = model.count_parameters()
@@ -310,7 +222,7 @@ def launch_finetune(
     finetune_params = train_config.get_finetune_params()
     data_params = train_config.get_data_params()
 
-    # 创建数据加载器时获取是否使用渐进式增强
+    # 创建数据加载器
     print("\n创建数据加载器...")
     train_loader, val_loader, use_progressive = create_supervised_dataloaders(
         data_config=data_params,
@@ -322,8 +234,6 @@ def launch_finetune(
     print(f"  - 训练集: {len(train_loader.dataset)} 样本")
     print(f"  - 验证集: {len(val_loader.dataset)} 样本")
     print(f"  - Batch size: {finetune_params['batch_size']}")
-    if use_progressive:
-        print(f"  ✅ 使用渐进式增强")
 
     # 创建优化器
     print("\n创建优化器...")
@@ -342,9 +252,9 @@ def launch_finetune(
     )
     print(f"✓ 调度器创建成功: {type(scheduler).__name__}")
 
-    # 使用新的ProgressiveAugmentationTrainer
+    # 🔧 修复: 使用修复后的SupervisedTrainer
     print("\n创建训练器...")
-    trainer = ProgressiveAugmentationTrainer(
+    trainer = SupervisedTrainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -354,7 +264,7 @@ def launch_finetune(
         device=device,
         experiment_dir=str(experiment_dir),
         use_amp=train_config.use_amp(),
-        mixup_config=train_config.get('mixup', None),
+        mixup_config=train_config.get('mixup', None) if train_config.use_mixup() else None,
         gradient_clip_max_norm=finetune_params['gradient_clip'].get('max_norm', 1.0),
         use_progressive_aug=use_progressive,
         max_epochs=finetune_params['epochs']
@@ -392,9 +302,3 @@ def launch_finetune(
 
     return model, experiment_dir, best_weights_path
 
-
-if __name__ == '__main__':
-    """独立运行微调"""
-    print("=" * 70)
-    print("微调启动脚本测试（已修复版本）")
-    print("=" * 70)

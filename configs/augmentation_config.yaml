@@ -237,17 +237,17 @@ mixup:
 # ====================================================================================
 # 在训练过程中逐渐增强数据增强强度
 progressive:
-  enable: true         # 是否启用渐进式增强
-  use_constant: false   # 是否使用恒定强度
-  default_intensity: 'medium'  # 设置强度: weak/medium/strong
+  enable_augmentation: true         # 是否启用增强
+  use_constant: false               # 是否使用恒定强度
+  default_intensity: 'medium'       # 设置强度: weak/medium/strong
 
   # 增强强度变化策略
   schedule:
-    # 前30%: 弱增强
-    # 30%-70%: 中等增强
-    # 70%-100%: 强增强
-    weak_ratio: 0.3
-    medium_ratio: 0.7
+    # 前weak_ration: 弱增强
+    # weak_ration-medium_ratio: 中等增强
+    # medium_ratio-1.0: 强增强
+    weak_ratio: 1.0
+    medium_ratio: 0.0
 
 # ====================================================================================
 # 配置验证和使用说明

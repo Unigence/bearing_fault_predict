@@ -195,13 +195,30 @@ class AugmentationConfigParser(ConfigParser):
     
     def __init__(self, config_path: str = 'configs/augmentation_config.yaml'):
         super().__init__(config_path)
-    
+
+    def enable_augmentation(self) -> bool:
+        """
+        Returns:
+            True=启用数据增强, False=禁用数据增强
+        """
+        return self.get('progressive.enable_augmentation', True)
+
     def use_progressive(self) -> bool:
         """是否使用渐进式增强"""
+        # 如果数据增强被禁用,则返回False
+        if not self.enable_augmentation():
+            return False
+
+        # 如果启用了恒定增强,则不使用渐进式
+        if self.use_constant():
+            return False
+
         return self.get('progressive.enable', True)
     
     def use_constant(self) -> bool:
         """是否使用恒定增强"""
+        if not self.enable_augmentation():
+            return False
         return self.get('progressive.use_constant', False)
     
     def get_default_intensity(self) -> str:
