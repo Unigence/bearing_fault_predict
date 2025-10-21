@@ -654,7 +654,7 @@ class SupervisedTrainer(TrainerBase):
             labels_subset = all_labels
 
         # 执行t-SNE
-        tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+        tsne = TSNE(n_components=2, random_state=42, perplexity=30)
         features_2d = tsne.fit_transform(features_subset)
 
         # 绘制t-SNE图
