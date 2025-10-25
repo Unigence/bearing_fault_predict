@@ -106,7 +106,7 @@ def launch_pretrain(
     experiment_name: str = None
 ):
     """
-    启动预训练
+    启动预训练 (支持 k-fold 交叉验证)
 
     Args:
         model_config: 模型配置解析器
@@ -115,9 +115,9 @@ def launch_pretrain(
         experiment_name: 实验名称
 
     Returns:
-        pretrained_model: 预训练好的模型
+        pretrained_model: 预训练好的模型（最后一个 fold 的模型）
         experiment_dir: 实验目录
-        pretrained_weights_path: 预训练权重路径
+        pretrained_weights_path: 预训练权重路径（最佳 fold 的权重）
     """
     # 设置随机种子
     seed = train_config.get_seed()
@@ -130,7 +130,7 @@ def launch_pretrain(
         device = 'cpu'
 
     print("=" * 80)
-    print("对比学习预训练")
+    print("对比学习预训练 (K-Fold 交叉验证)")
     print("=" * 80)
     print(f"设备: {device}")
     print(f"随机种子: {seed}")
@@ -146,103 +146,167 @@ def launch_pretrain(
 
     print(f"实验目录: {experiment_dir}")
 
-    # 创建模型
-    print("\n创建模型...")
-    model_params = model_config.get_model_params()
-    model = create_model(**model_params, enable_contrastive=True)  # 🔧 启用对比学习模式
-
-    # 打印模型信息
-    param_dict = model.count_parameters()
-    print(f"✓ 模型创建成功")
-    print(f"  - 配置: {model_params['config']}")
-    print(f"  - 总参数: {param_dict['total']:,}")
-    print(f"  - 可训练参数: {param_dict['trainable']:,}")
-    print(f"  - 投影头参数: {param_dict.get('projection_head', 0):,}")
-
-    # 获取预训练配置
+    # 获取配置
     pretrain_params = train_config.get_pretrain_params()
     data_params = train_config.get_data_params()
     aug_params = aug_config.get_contrastive_aug_params()
 
-    # 🔧 修复: 创建数据加载器（验证集使用弱增强）
-    print("\n创建数据加载器...")
-    train_loader, val_loader = create_contrastive_dataloaders(
-        data_config=data_params,
-        aug_config=aug_params,
-        batch_size=pretrain_params['batch_size']
-    )
-    print(f"✓ 数据加载器创建成功")
-    print(f"  - 训练集: {len(train_loader.dataset)} 样本")
-    print(f"  - 验证集: {len(val_loader.dataset)} 样本")
-    print(f"  - Batch size: {pretrain_params['batch_size']}")
+    # 获取 k-fold 配置
+    n_folds = data_params.get('n_folds', 5)
+    print(f"\n使用 {n_folds}-Fold 交叉验证")
 
-    # 创建优化器
-    print("\n创建优化器...")
-    optimizer = create_optimizer_from_config(
-        model,
-        pretrain_params['optimizer']
-    )
-    print(f"✓ 优化器创建成功: {type(optimizer).__name__}")
+    # 存储每个 fold 的结果
+    fold_results = []
+    best_fold = None
+    best_val_loss = float('inf')
 
-    # 创建学习率调度器
-    print("\n创建学习率调度器...")
-    scheduler, needs_metric = create_scheduler_from_config(
-        optimizer,
-        pretrain_params['scheduler'],
-        total_epochs=pretrain_params['epochs']
-    )
-    print(f"✓ 调度器创建成功: {type(scheduler).__name__}")
-    if needs_metric:
-        print(f"  ⚠️  此调度器需要metric,trainer将自动传入val_loss")
+    # 循环遍历所有 folds
+    for fold in range(n_folds):
+        print("\n" + "=" * 80)
+        print(f"Fold {fold + 1}/{n_folds}")
+        print("=" * 80)
 
-    # 创建训练器
-    print("\n创建训练器...")
-    trainer = ContrastiveTrainer(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        loss_type=pretrain_params['loss'].get('type', 'ntxent'),
-        temperature=pretrain_params['loss'].get('temperature', 0.07),
-        device=device,
-        experiment_dir=str(experiment_dir),
-        use_amp=train_config.use_amp(),
-        gradient_clip_max_norm=pretrain_params['gradient_clip'].get('max_norm', 1.0)
-    )
+        # 为每个 fold 设置随机种子（保证可复现性）
+        set_seed(seed + fold)
 
-    # 设置callbacks
-    trainer.setup_callbacks(
-        early_stopping_config=pretrain_params.get('early_stopping', {}),
-        checkpoint_config=model_config.get_checkpoint_params()
-    )
+        # 创建 fold 特定的实验目录
+        fold_dir = experiment_dir / f"fold_{fold}"
+        fold_dir.mkdir(parents=True, exist_ok=True)
 
-    # 开始训练
+        # 创建模型
+        print(f"\n创建模型 (Fold {fold + 1})...")
+        model_params = model_config.get_model_params()
+        model = create_model(**model_params, enable_contrastive=True)
+
+        # 打印模型信息（仅第一个 fold）
+        if fold == 0:
+            param_dict = model.count_parameters()
+            print(f"✓ 模型创建成功")
+            print(f"  - 配置: {model_params['config']}")
+            print(f"  - 总参数: {param_dict['total']:,}")
+            print(f"  - 可训练参数: {param_dict['trainable']:,}")
+            print(f"  - 投影头参数: {param_dict.get('projection_head', 0):,}")
+
+        # 更新当前 fold
+        data_params['current_fold'] = fold
+
+        # 创建数据加载器
+        print(f"\n创建数据加载器 (Fold {fold + 1})...")
+        train_loader, val_loader = create_contrastive_dataloaders(
+            data_config=data_params,
+            aug_config=aug_params,
+            batch_size=pretrain_params['batch_size']
+        )
+        print(f"✓ 数据加载器创建成功")
+        print(f"  - 训练集: {len(train_loader.dataset)} 样本")
+        print(f"  - 验证集: {len(val_loader.dataset)} 样本")
+        print(f"  - Batch size: {pretrain_params['batch_size']}")
+
+        # 创建优化器
+        optimizer = create_optimizer_from_config(
+            model,
+            pretrain_params['optimizer']
+        )
+
+        # 创建学习率调度器
+        scheduler, needs_metric = create_scheduler_from_config(
+            optimizer,
+            pretrain_params['scheduler'],
+            total_epochs=pretrain_params['epochs']
+        )
+
+        # 创建训练器
+        print(f"\n创建训练器 (Fold {fold + 1})...")
+        trainer = ContrastiveTrainer(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            loss_type=pretrain_params['loss'].get('type', 'ntxent'),
+            temperature=pretrain_params['loss'].get('temperature', 0.07),
+            device=device,
+            experiment_dir=str(fold_dir),
+            use_amp=train_config.use_amp(),
+            gradient_clip_max_norm=pretrain_params['gradient_clip'].get('max_norm', 1.0)
+        )
+
+        # 设置callbacks
+        trainer.setup_callbacks(
+            early_stopping_config=pretrain_params.get('early_stopping', {}),
+            checkpoint_config=model_config.get_checkpoint_params()
+        )
+
+        # 开始训练
+        print(f"\n开始训练 Fold {fold + 1}...")
+        trainer.train(
+            epochs=pretrain_params['epochs'],
+            log_interval=train_config.get('experiment.logging.log_interval', 10),
+            save_config={
+                'model': model_config.to_dict(),
+                'train': train_config.to_dict(),
+                'augmentation': aug_config.to_dict(),
+                'fold': fold
+            }
+        )
+
+        # 保存当前 fold 的权重
+        fold_weights_path = fold_dir / 'pretrained_weights.pth'
+        trainer.save_pretrained_weights(str(fold_weights_path))
+
+        # 获取最佳验证损失
+        best_metric_value, best_epoch = trainer.metrics_tracker.get_best_metric('val_loss', mode='min')
+
+        # 记录 fold 结果
+        fold_results.append({
+            'fold': fold,
+            'best_val_loss': best_metric_value,
+            'best_epoch': best_epoch,
+            'weights_path': fold_weights_path
+        })
+
+        print(f"\n✓ Fold {fold + 1} 完成")
+        print(f"  - 最佳验证损失: {best_metric_value:.4f} (Epoch {best_epoch})")
+        print(f"  - 权重路径: {fold_weights_path}")
+
+        # 更新最佳 fold
+        if best_metric_value < best_val_loss:
+            best_val_loss = best_metric_value
+            best_fold = fold
+            best_model = model
+
+    # 打印所有 folds 的总结
     print("\n" + "=" * 80)
-    print("开始预训练")
+    print("K-Fold 交叉验证结果总结")
     print("=" * 80)
+    for result in fold_results:
+        mark = "⭐ " if result['fold'] == best_fold else "  "
+        print(f"{mark}Fold {result['fold'] + 1}: val_loss = {result['best_val_loss']:.4f} (epoch {result['best_epoch']})")
 
-    trainer.train(
-        epochs=pretrain_params['epochs'],
-        log_interval=train_config.get('experiment.logging.log_interval', 10),
-        save_config={
-            'model': model_config.to_dict(),
-            'train': train_config.to_dict(),
-            'augmentation': aug_config.to_dict()
-        }
-    )
+    # 计算平均和标准差
+    val_losses = [r['best_val_loss'] for r in fold_results]
+    import numpy as np
+    mean_val_loss = np.mean(val_losses)
+    std_val_loss = np.std(val_losses)
 
-    # 保存预训练权重
+    print(f"\n验证损失统计:")
+    print(f"  - 平均值: {mean_val_loss:.4f}")
+    print(f"  - 标准差: {std_val_loss:.4f}")
+    print(f"  - 最佳 Fold: {best_fold + 1} (val_loss = {best_val_loss:.4f})")
+
+    # 复制最佳 fold 的权重到主目录
     pretrained_weights_path = experiment_dir / 'pretrained_weights.pth'
-    trainer.save_pretrained_weights(str(pretrained_weights_path))
+    import shutil
+    shutil.copy(fold_results[best_fold]['weights_path'], pretrained_weights_path)
 
     print("\n" + "=" * 80)
     print("✓ 预训练完成!")
     print("=" * 80)
-    print(f"预训练权重: {pretrained_weights_path}")
+    print(f"预训练权重 (最佳 Fold): {pretrained_weights_path}")
     print(f"实验目录: {experiment_dir}")
+    print(f"各 Fold 结果保存在: {experiment_dir}/fold_*")
 
-    return model, experiment_dir, pretrained_weights_path
+    return best_model, experiment_dir, pretrained_weights_path
 
 
 if __name__ == '__main__':
