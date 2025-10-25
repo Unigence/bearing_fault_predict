@@ -3,6 +3,7 @@
 """
 import torch
 import torch.nn as nn
+import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, Any
 import time
@@ -441,6 +442,68 @@ class ContrastiveTrainer(TrainerBase):
         print(f"  - 用时: {epoch_time:.2f}s")
         print(f"{'='*80}")
 
+    def _extract_features(self, max_samples: int = 2000):
+        """
+        从验证集提取特征用于可视化
+
+        Args:
+            max_samples: 最大采样数量（避免内存溢出）
+
+        Returns:
+            features: 特征数组 (N, feature_dim)
+            labels: 标签数组 (N,)
+        """
+        self.model.eval()
+        all_features = []
+        all_labels = []
+
+        print(f"\n从验证集提取特征 (最多 {max_samples} 个样本)...")
+
+        with torch.no_grad():
+            for batch in self.val_loader:
+                # 将batch移到设备
+                batch = self._move_batch_to_device(batch)
+
+                # 提取view1的特征（对比学习中两个view都可以，这里选view1）
+                if 'view1' in batch:
+                    # 对比学习模式：提取view1的融合特征
+                    feat_t = self.model.temporal_branch(batch['view1']['temporal'])
+                    feat_f = self.model.frequency_branch(batch['view1']['frequency'])
+                    feat_tf = self.model.timefreq_branch(batch['view1']['timefreq'])
+                    fused_feat = self.model.fusion(feat_t, feat_f, feat_tf)
+                else:
+                    # 有监督模式：直接提取融合特征
+                    feat_t = self.model.temporal_branch(batch['temporal'])
+                    feat_f = self.model.frequency_branch(batch['frequency'])
+                    feat_tf = self.model.timefreq_branch(batch['timefreq'])
+                    fused_feat = self.model.fusion(feat_t, feat_f, feat_tf)
+
+                # 获取标签
+                if 'label' in batch:
+                    labels = batch['label']
+                elif 'labels' in batch:
+                    labels = batch['labels']
+                else:
+                    print("  ⚠ 警告: batch中没有标签，无法绘制t-SNE")
+                    return None, None
+
+                all_features.append(fused_feat.cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+
+                # 检查是否达到最大样本数
+                total_samples = sum(len(f) for f in all_features)
+                if total_samples >= max_samples:
+                    break
+
+        # 合并所有batch
+        features = np.concatenate(all_features, axis=0)[:max_samples]
+        labels = np.concatenate(all_labels, axis=0)[:max_samples]
+
+        print(f"  ✓ 提取完成: {len(features)} 个样本，特征维度 {features.shape[1]}")
+        print(f"  ✓ 类别分布: {np.bincount(labels)}")
+
+        return features, labels
+
     def _plot_curves(self):
         """
         绘制训练曲线
@@ -448,6 +511,7 @@ class ContrastiveTrainer(TrainerBase):
         对于对比学习,主要绘制:
         - 损失曲线 (train_loss vs val_loss)
         - 学习率曲线
+        - t-SNE特征可视化（新增）
         """
         print("\n绘制训练曲线...")
 
@@ -481,6 +545,39 @@ class ContrastiveTrainer(TrainerBase):
                 show=False
             )
             print(f"  ✓ 学习率曲线已保存: {vis_dir / 'learning_rate.png'}")
+
+        # 绘制t-SNE特征可视化
+        print("\n绘制t-SNE特征可视化...")
+        features, labels = self._extract_features(max_samples=2000)
+
+        if features is not None and labels is not None:
+            from utils.visualization import plot_embeddings_2d
+
+            # 绘制t-SNE
+            tsne_path = vis_dir / 'tsne_visualization.png'
+            plot_embeddings_2d(
+                embeddings=features,
+                labels=labels,
+                method='tsne',
+                title='t-SNE Visualization of Learned Features',
+                figsize=(10, 8),
+                save_path=str(tsne_path),
+                show=False
+            )
+            print(f"  ✓ t-SNE可视化已保存: {tsne_path}")
+
+            # 同时绘制PCA作为对比
+            pca_path = vis_dir / 'pca_visualization.png'
+            plot_embeddings_2d(
+                embeddings=features,
+                labels=labels,
+                method='pca',
+                title='PCA Visualization of Learned Features',
+                figsize=(10, 8),
+                save_path=str(pca_path),
+                show=False
+            )
+            print(f"  ✓ PCA可视化已保存: {pca_path}")
 
         print("✓ 训练曲线绘制完成")
 
