@@ -108,47 +108,59 @@ class SupConLoss(nn.Module):
         self.temperature = temperature
         self.base_temperature = base_temperature
         
-    def forward(self, features, labels):
+    def forward(self, z1=None, z2=None, labels=None, features=None):
         """
-        前向传播
-        
+        前向传播 (支持两种调用方式)
+
         Args:
-            features: 特征 (B, D) 或 (B, n_views, D)
-                     如果是3D，表示每个样本有n_views个增强版本
+            z1: 第一个视图的特征 (B, D) - 用于对比学习
+            z2: 第二个视图的特征 (B, D) - 用于对比学习
             labels: 标签 (B,)
-        
+            features: 特征 (B, D) 或 (B, n_views, D) - 用于传统多视图方式
+                     如果是3D，表示每个样本有n_views个增强版本
+
         Returns:
             loss: SupCon损失
         """
-        device = features.device
-        
-        # 处理输入维度
-        if len(features.shape) == 2:
-            # (B, D) -> (B, 1, D)
-            features = features.unsqueeze(1)
-        
-        batch_size = features.shape[0]
+        # 支持两种调用方式
+        if z1 is not None and z2 is not None:
+            # 方式1: 传入两个视图 (对比学习常用)
+            # z1: (B, D), z2: (B, D) -> features: (B, 2, D)
+            batch_size = z1.shape[0]
+            features = torch.stack([z1, z2], dim=1)  # (B, 2, D)
+            device = z1.device
+        elif features is not None:
+            # 方式2: 传入单个特征张量
+            device = features.device
+            # 处理输入维度
+            if len(features.shape) == 2:
+                # (B, D) -> (B, 1, D)
+                features = features.unsqueeze(1)
+            batch_size = features.shape[0]
+        else:
+            raise ValueError("必须提供 (z1, z2) 或 features")
+
         n_views = features.shape[1]
-        
+
         # 展平: (B, n_views, D) -> (B*n_views, D)
         features = features.view(batch_size * n_views, -1)
-        
+
         # L2归一化
         features = F.normalize(features, p=2, dim=1)
-        
+
         # 扩展标签: (B,) -> (B*n_views,)
         labels = labels.contiguous().view(-1, 1)
         if n_views > 1:
             labels = labels.repeat(n_views, 1)
         labels = labels.view(-1)
-        
+
         # 计算相似度矩阵
         sim_matrix = torch.matmul(features, features.T) / self.temperature  # (B*n_views, B*n_views)
-        
+
         # 创建mask
         # 1. 排除自身
         mask_self = torch.eye(batch_size * n_views, dtype=torch.bool, device=device)
-        
+
         # 2. 找到同类样本（正样本）
         mask_pos = labels.unsqueeze(0) == labels.unsqueeze(1)  # (B*n_views, B*n_views)
         mask_pos = mask_pos & ~mask_self  # 排除自身
